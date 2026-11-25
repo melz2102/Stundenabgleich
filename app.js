@@ -1050,7 +1050,7 @@ document.addEventListener('change', e => {
 });
 
 /* ---------- Übersicht ---------- */
-const APP_VERSION = '24';
+const APP_VERSION = '25';
 async function renderHome() {
   const docs = await Docs.all();
   $('#count-woche').textContent = docs.filter(d => d.type === 'woche').length;
@@ -1101,6 +1101,20 @@ async function repariereAlteZettel() {
         d.data.posten = texte.length ? self.LohnParser.zusammenfuehren(texte.map(t => self.LohnParser.parseLohnzettel(t))).posten : [];
         self.LohnParser.mengenAbgleichen(d.data);
         self.LohnParser.pruefe(d.data);
+        await Docs.add(d);
+      }
+      // AZK-Stand mit der verbesserten Erkennung (Minus, verlesenes Komma) aus dem gespeicherten Text neu lesen:
+      // nur nachtragen, wenn das Feld leer war oder nur das Minus fehlte
+      if (d.type === 'lohn' && d.data && !d.data._azk2) {
+        const texte = d.data.rohtexte || (d.data.rohtext ? [d.data.rohtext] : []);
+        const neu = texte.length ? self.LohnParser.zusammenfuehren(texte.map(t => self.LohnParser.parseLohnzettel(t))).azkStand : null;
+        const alt = d.data.azkStand;
+        if (neu != null && (alt == null || (neu < 0 && alt === -neu))) {
+          d.data.azkStand = neu;
+          self.LohnParser.pruefe(d.data);
+          if (d.status === 'geprueft') d.status = 'ausgelesen'; // geänderten Wert bitte noch einmal ansehen
+        }
+        d.data._azk2 = 1;
         await Docs.add(d);
       }
       // Ältere Lohnzettel: Urlaubs-, Krank-, Feiertags- und sonstige Stunden aus dem gespeicherten Erkennungstext nachtragen

@@ -23,6 +23,16 @@
   const implied = s => (s == null ? null : parseInt(s, 10) / 100);
 
   // OCR verwechselt gern O/0, l/1, S/5 in Zahlen
+  const MINUS = '\\-\u2010\u2011\u2012\u2013\u2014\u2212~';
+  const AZK_RE = new RegExp('A[ZB2]K\\W{0,3}[S5][tf][dc][^\\w' + MINUS + ']{0,3}([^\\d\\n' + MINUS + ']{0,12}?)([' + MINUS + ']?)\\s?(\\d{1,3}(?:\\.\\d{3})*|\\d{1,4})\\s?[,.\u201a]\\s?(\\d{2})(?!\\d)[ \\t]*([' + MINUS + '_]?)', 'i');
+  function azkLesen(text) {
+    const m = String(text || '').match(AZK_RE);
+    if (!m) return null;
+    const n = parseFloat(m[3].replace(/\./g, '') + '.' + m[4]);
+    if (isNaN(n)) return null;
+    return m[2] || m[5] ? -n : n;
+  }
+
   function fixDigits(s) {
     return s.replace(/_/g, ' ').replace(/(?<=\d)[Oo](?=\d|\b)/g, '0').replace(/(?<=\d)[lI|](?=\d)/g, '1');
   }
@@ -145,9 +155,9 @@
     }
     if (verpflUnsicher) r.verpflegungEuro = null;
 
-    // Arbeitszeitkonto-Stand ("AZK-Std. 4,25-")
-    const azk = all.match(/AZK[-\s]?Std\.?\s*:?\s*(-?\d{1,4}(?:\.\d{3})*,\d{2}\s*-?)/i);
-    if (azk) r.azkStand = deNum(azk[1]);
+    // Arbeitszeitkonto-Stand ("AZK-Std. 4,25-" = minus 4,25). Die Texterkennung liest manchmal
+    // "ABK-5td.", "19 ‚00-", "19.00 —" oder setzt Krümel zwischen Wort und Zahl ("AZK-Std. m 7,75-").
+    r.azkStand = azkLesen(all);
 
     // Urlaub (Anspruch | genommen | Rest): drei Kopfwerte mit 3-4 Ziffern, bei denen Anspruch − genommen = Rest
     const passendesTripel = cand => {
@@ -298,6 +308,8 @@
       out[f] = best ? best.v : null;
       out['_' + f + 'Sicher'] = best ? best.n >= 2 || results.length === 1 : false;
     }
+    // Das Minus beim AZK-Stand ist klein und geht beim Lesen eher verloren, als dass eins dazukommt
+    if (out.azkStand > 0 && results.some(r => r.azkStand === -out.azkStand)) out.azkStand = -out.azkStand;
     const vq = results.find(r => r.verpflegungEuro === out.verpflegungEuro);
     out.verpflegung = vq && vq.verpflegung ? vq.verpflegung : [];
     // Zusammengehörige Werte, die sich gegenseitig bestätigen, gemeinsam aus einem stimmigen Durchlauf nehmen
@@ -318,7 +330,7 @@
     return pruefe(out);
   }
 
-  const api = { parseLohnzettel: parse, pruefe, zusammenfuehren, mengenAbgleichen, stundenFeld, deNum, ABWESENHEIT };
+  const api = { parseLohnzettel: parse, pruefe, zusammenfuehren, mengenAbgleichen, stundenFeld, deNum, azkLesen, ABWESENHEIT };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.LohnParser = api;
 })(typeof self !== 'undefined' ? self : this);
