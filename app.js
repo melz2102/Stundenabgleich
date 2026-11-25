@@ -557,10 +557,13 @@ function openReviewLohn(d) {
     <div class="day"><div class="day-head"><strong>${titel}</strong></div>
       ${felder.map(([k, l]) => `<label class="field">${l}<input inputmode="decimal" data-lf="${k}" value="${r[k] == null ? '' : inVal(r[k])}"></label>`).join('')}
     </div>`).join('');
+  // Hinweise immer frisch berechnen (z.B. wenn Urlaubsstunden fehlen, passen die bezahlten Stunden nicht)
+  const warnungen = self.LohnParser.pruefe(Object.assign({}, r)).warnungen;
+  const kannNeuLesen = d.blob && (/^image\//.test(d.mime || '') || /pdf/.test(d.mime || ''));
   $('#viewer-title').textContent = 'Prüfen: ' + (d.period || d.name);
   $('#viewer-body').innerHTML = `
     <div class="review">
-      ${r.warnungen && r.warnungen.length ? `<div class="notice err">${r.warnungen.map(esc).join('<br>')}</div>` : ''}
+      ${warnungen.length ? `<div class="notice err">${warnungen.map(esc).join('<br>')}${kannNeuLesen ? '<br>Tipp: „Neu auslesen“ liest das Foto mit der neuesten App-Version noch einmal.' : ''}</div>` : ''}
       ${d.readError ? `<div class="notice err">Automatisches Auslesen hat nicht geklappt: ${esc(d.readError)}<br>Du kannst die Werte hier von Hand eintragen.</div>` : ''}
       <p class="muted small">Vergleiche die Werte mit deinem Lohnzettel. Leere Felder kommen auf dem Zettel nicht vor. ${r.quelle === 'foto' ? 'Bei Fotos verliest sich die Erkennung manchmal, also bitte genau hinschauen.' : ''}</p>
       <div class="day"><div class="day-head"><strong>Abrechnungsmonat</strong></div>
@@ -570,12 +573,38 @@ function openReviewLohn(d) {
         </div>
       </div>
       ${groups}
+      ${r.rohtext ? `<details class="small"><summary class="muted">Erkannter Text anzeigen</summary><pre class="rohtext">${esc(r.rohtext)}</pre></details>` : ''}
       <div class="review-actions">
         <button class="btn" data-review-open="${d.id}">Zettel ansehen</button>
+        ${kannNeuLesen ? `<button class="btn" data-reread="${d.id}">Neu auslesen</button>` : ''}
         <button class="btn primary" id="review-save">✓ Geprüft, speichern</button>
       </div>
     </div>`;
   if (!$('#viewer').open) $('#viewer').showModal();
+}
+
+// Lohnzettel mit der aktuellen Erkennung noch einmal auslesen (ersetzt die bisherigen Werte)
+async function neuAuslesen(id, btn) {
+  const d = await Docs.get(id);
+  if (!d || !d.blob) return;
+  $$('#viewer-body button').forEach(b => { b.disabled = true; });
+  btn.textContent = 'Lese … 0 %';
+  try {
+    const file = new File([d.blob], d.name || 'lohnzettel', { type: d.mime || d.blob.type || '' });
+    const data = await self.Extract.readLohnzettel(file, pct => { btn.textContent = `Lese … ${pct} %`; });
+    d.data = data;
+    d.readError = null;
+    d.status = 'ausgelesen';
+    d.checkedAt = null;
+    if (data.monat && data.jahr) d.period = `${MONATE[data.monat - 1]} ${data.jahr}`;
+    await Docs.add(d);
+    openReviewLohn(d);
+    renderDocs();
+  } catch (e) {
+    $$('#viewer-body button').forEach(b => { b.disabled = false; });
+    btn.textContent = 'Neu auslesen';
+    $('#viewer-body .review').insertAdjacentHTML('afterbegin', `<div class="notice err">Neu auslesen hat nicht geklappt: ${esc(e.message || String(e))}</div>`);
+  }
 }
 
 async function saveReviewLohn(d) {
@@ -586,7 +615,7 @@ async function saveReviewLohn(d) {
     if (k === 'monat' || k === 'jahr') r[k] = v ? parseInt(v, 10) : null;
     else r[k] = v === '' ? null : numIn(v);
   });
-  r.warnungen = [];
+  self.LohnParser.pruefe(r);
   // Verpflegung von Hand geändert: Aufteilung nach Tagessätzen passt dann nicht mehr
   const vSumme = (r.verpflegung || []).reduce((s, v) => s + v.betrag, 0);
   if (r.verpflegungEuro == null || Math.abs(vSumme - r.verpflegungEuro) > 0.01) r.verpflegung = [];
@@ -679,6 +708,8 @@ document.addEventListener('click', e => {
   if (r) { openReview(r.dataset.review); return; }
   const o = e.target.closest('[data-review-open]');
   if (o) { $('#viewer').close(); openViewer(o.dataset.reviewOpen); return; }
+  const rr = e.target.closest('[data-reread]');
+  if (rr) { neuAuslesen(rr.dataset.reread, rr); return; }
   if (e.target.id === 'review-save') saveReview();
 });
 
@@ -740,6 +771,8 @@ async function renderAuswertung(docs) {
   } else {
     const abw = r.abgleich.filter(a => a.status === 'abw').length;
     abgleichHtml = `
+      ${r.lohnLuecke ? `<div class="notice err"><strong>Lohnzettel nicht vollständig ausgelesen.</strong> Laut Kopf sind ${fmtH(r.lohnLuecke.bezahlt)} Std. bezahlt, erkannt wurden nur ${fmtH(r.lohnLuecke.erkannt)}. Meist fehlen Urlaubs- oder Krankstunden, daher stimmen die Abweichungen unten nicht.
+        <div style="margin-top:8px"><button class="btn small primary" data-review="${r.lohnId}">Lohnzettel prüfen</button></div></div>` : ''}
       <div class="notice ${abw ? 'err' : r.vollstaendig ? 'ok' : ''}">${abw ? `<strong>${abw} Abweichung(en)</strong> zwischen Wochenzetteln und Lohnzettel.`
         : r.vollstaendig ? 'Keine Abweichungen gefunden.'
         : 'Bisher keine Abweichungen. Stundenlohn, Urlaub, Krank und Arbeitszeitkonto kann ich erst vergleichen, wenn alle Wochenzettel des Monats da sind.'}</div>

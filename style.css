@@ -188,3 +188,5 @@ html, body { overflow-x: hidden; }
 .chk { margin-top: 4px; border: 1px solid var(--line); background: var(--bg); color: var(--muted); border-radius: 99px; padding: 4px 10px; font: inherit; font-size: 13px; cursor: pointer; }
 .chk.on { border-color: var(--ok); color: var(--ok); font-weight: 600; }
 .badge.warn { background: #f6d7a7; color: #6b4300; }
+.rohtext { white-space: pre-wrap; font-size: 11px; max-height: 40vh; overflow: auto; background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 8px; user-select: text; -webkit-user-select: text; }
+details.small { margin: 8px 0; }

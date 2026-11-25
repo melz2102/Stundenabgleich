@@ -12,6 +12,8 @@
   const SOLL = [0, 8.5, 8.5, 8.5, 8.5, 5.0, 0]; // So, Mo, Di, Mi, Do, Fr, Sa
   const r2 = v => Math.round(v * 100) / 100;
   const near = (a, b) => Math.abs(a - b) < 0.01;
+  // Zahl für Hinweistexte: 25,5 statt 25.5, echtes Minus
+  const de = v => (v == null ? '–' : String(r2(v)).replace('.', ',').replace('-', '−'));
 
   function iso(d) {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -137,6 +139,7 @@
     res.lohn = lohnDoc ? lohnDoc.data : null;
     res.lohnGeprueft = lohnDoc ? lohnDoc.status === 'geprueft' : false;
     res.lohnVormonat = vorDoc ? vorDoc.data : null;
+    res.lohnId = lohnDoc ? lohnDoc.id : null;
     const L = res.lohn;
     const A = res.abgleich;
     const add = (titel, zettel, lohn, status, hinweis) => A.push({ titel, zettel, lohn, status, hinweis });
@@ -144,18 +147,27 @@
     if (L) {
       const abwLohn = (L.urlaubStd || 0) + (L.krankStd || 0) + (L.feiertagStd || 0) + (L.sonstigeStd || 0);
       const abwZettel = res.stdKat.urlaub + res.stdKat.krank + res.stdKat.feiertag;
+      // 0) Passt der Lohnzettel in sich? Bez. Std. (Kopf) = Zeitlohn + Überstd. + Urlaub/Krank/Feiertag + AZK-Abbau.
+      //    Wenn nicht, wurde meist eine Lohnart (z.B. Urlaubsstunden) beim Auslesen nicht erkannt.
+      if (L.bezahltStd != null && L.zeitlohnStd != null) {
+        const erkannt = r2(L.zeitlohnStd + (L.ueberstd || 0) + (L.azkAbbau || 0) + abwLohn);
+        if (!near(erkannt, L.bezahltStd)) res.lohnLuecke = { bezahlt: L.bezahltStd, erkannt, fehlt: r2(L.bezahltStd - erkannt) };
+      }
+      const luecke = res.lohnLuecke;
       // 1) Bezahlte Grundstunden (Stundenlohn + Urlaub + Krank + Feiertag + AZK-Abbau) = Monatssoll
       if (L.stundenlohn != null) {
         const grund = r2(L.stundenlohn + abwLohn + (L.azkAbbau || 0) - (L.azkAufbau || 0));
         add('Bezahlte Grundstunden (Stundenlohn + Urlaub + Krank + AZK-Abbau)', res.soll, grund, near(grund, res.soll) ? 'ok' : 'abw',
-          near(grund, res.soll) ? 'Entspricht dem Monatssoll.' : `Abweichung ${r2(grund - res.soll)} Std. zum Monatssoll.`);
+          near(grund, res.soll) ? 'Entspricht dem Monatssoll.'
+            : luecke ? `Der Lohnzettel ist nicht vollständig ausgelesen: Laut Kopf ${de(luecke.bezahlt)} bezahlte Std., erkannt nur ${de(luecke.erkannt)}. Es fehlen ${de(luecke.fehlt)} Std., meist Urlaubs- oder Krankstunden. Öffne den Lohnzettel und tippe „Neu auslesen“ oder trag die Werte ein.`
+            : `Abweichung ${de(grund - res.soll)} Std. zum Monatssoll.`);
       }
       // 2) Stundenlohn = gearbeitete Stunden (Ist ohne Urlaub/Krank/Feiertag) − ausgezahlte Überstunden − aufs Konto gebuchte Mehrstunden
       if (L.stundenlohn != null) {
         const erwartet = r2(res.ist - abwZettel - res.mehrVerguetet - Math.max(res.saldoGesammelt, 0));
         if (res.vollstaendig) {
           add('Stundenlohn', erwartet, L.stundenlohn, near(erwartet, L.stundenlohn) ? 'ok' : 'abw',
-            near(erwartet, L.stundenlohn) ? 'Passt zu deinen Wochenzetteln.' : `Abweichung ${r2(L.stundenlohn - erwartet)} Std.`);
+            near(erwartet, L.stundenlohn) ? 'Passt zu deinen Wochenzetteln.' : `Abweichung ${de(L.stundenlohn - erwartet)} Std.`);
         } else {
           add('Stundenlohn', erwartet, L.stundenlohn, 'info', 'Wochenzettel für diesen Monat unvollständig, Vergleich nicht möglich.');
         }
@@ -167,7 +179,9 @@
           const l = r2(L[feld] || 0);
           if (!z && !l) return;
           if (res.vollstaendig) {
-            add(titel, z, l, near(z, l) ? 'ok' : 'abw', near(z, l) ? '' : `Laut Wochenzetteln ${z} Std., abgerechnet ${l} Std.`);
+            add(titel, z, l, near(z, l) ? 'ok' : 'abw', near(z, l) ? ''
+              : L[feld] == null && luecke ? 'Auf dem Lohnzettel nicht erkannt. Bitte den Lohnzettel prüfen.'
+              : `Laut Wochenzetteln ${de(z)} Std., abgerechnet ${de(l)} Std.`);
           } else {
             add(titel, z, l, 'info', 'Wochenzettel für diesen Monat unvollständig, Vergleich nicht möglich.');
           }
@@ -177,7 +191,7 @@
         const abbauErwartet = r2(Math.max(-res.saldoGesammelt, 0));
         const abbau = r2(L.azkAbbau || 0);
         add('Abbau Arbeitszeitkonto', abbauErwartet, abbau, near(abbauErwartet, abbau) ? 'ok' : 'abw',
-          near(abbauErwartet, abbau) ? 'Passt zu deinem Monatssaldo.' : `Laut Wochenzetteln ${abbauErwartet} Std., abgerechnet ${abbau} Std.`);
+          near(abbauErwartet, abbau) ? 'Passt zu deinem Monatssaldo.' : `Laut Wochenzetteln ${de(abbauErwartet)} Std., abgerechnet ${de(abbau)} Std.`);
         if (res.saldoGesammelt > 0) {
           const auf = L.azkAufbau;
           add('Aufbau Arbeitszeitkonto', res.saldoGesammelt, auf, auf == null ? 'info' : (near(auf, res.saldoGesammelt) ? 'ok' : 'abw'),
@@ -195,7 +209,7 @@
         if (vorStand != null && res.vollstaendig) {
           const veraenderung = r2(L.azkStand - vorStand);
           add('Veränderung Arbeitszeitkonto', res.saldoGesammelt, veraenderung, near(veraenderung, res.saldoGesammelt) ? 'ok' : 'abw',
-            `Stand jetzt ${L.azkStand} Std., Vormonat ${vorStand} Std.`);
+            `Stand jetzt ${de(L.azkStand)} Std., Vormonat ${de(vorStand)} Std.`);
         } else {
           add('AZK-Stand laut Lohnzettel', null, L.azkStand, 'info',
             vorStand == null ? 'Zum Vergleich der Veränderung fehlt der Lohnzettel vom Vormonat.'
@@ -207,7 +221,11 @@
         const vorGen = res.lohnVormonat && res.lohnVormonat.urlaubGenommen;
         if (vorGen != null && res.vollstaendig) {
           const imMonat = r2(L.urlaubGenommen - vorGen);
-          add('Urlaubstage im Monat', res.tage.urlaub, imMonat, near(imMonat, res.tage.urlaub) ? 'ok' : 'abw', '');
+          add('Urlaubstage im Monat', res.tage.urlaub, imMonat, near(imMonat, res.tage.urlaub) ? 'ok' : 'abw',
+            near(imMonat, res.tage.urlaub) ? ''
+              : `„Urlaub genommen“ auf dem Lohnzettel: ${de(L.urlaubGenommen)} Tage, im Vormonat ${de(vorGen)}. `
+                + (imMonat < res.tage.urlaub ? 'Fehlende Tage werden manchmal erst im Folgemonat abgezogen – schau dann auf den nächsten Lohnzettel.'
+                  : 'Vielleicht wurden Tage aus einem Vormonat nachgebucht.'));
         } else {
           add('Urlaubstage im Monat', res.tage.urlaub, null, 'info',
             `Lohnzettel: ${L.urlaubGenommen} Tage genommen im Jahr, Rest ${L.urlaubRest ?? '–'}. Für den Monatsvergleich fehlt der Lohnzettel vom Vormonat.`);
@@ -218,7 +236,7 @@
         const z = r2(res.fahrt), l = r2(L.fahrgeldStd || 0);
         if (res.vollstaendig) {
           add('Fahrgeld-Stunden', z, l, near(z, l) ? 'ok' : 'abw',
-            near(z, l) ? 'Passt zur Fahrtätigkeit auf deinen Wochenzetteln.' : `Laut Wochenzetteln ${z} Std. Fahrtätigkeit, abgerechnet ${l} Std.`);
+            near(z, l) ? 'Passt zur Fahrtätigkeit auf deinen Wochenzetteln.' : `Laut Wochenzetteln ${de(z)} Std. Fahrtätigkeit, abgerechnet ${de(l)} Std.`);
         } else {
           add('Fahrgeld-Stunden', z, l, 'info', 'Wochenzettel für diesen Monat unvollständig, Vergleich nicht möglich.');
         }
@@ -235,7 +253,7 @@
           (L.verpflegung || []).forEach(v => { if (v.satz && v.tage) lohnTage[v.satz] = (lohnTage[v.satz] || 0) + v.tage; });
           const detail = `Wochenzettel: ${tageText(res.verpflTage) || '–'}.` + (Object.keys(lohnTage).length ? ` Lohnzettel: ${tageText(lohnTage)}.` : '');
           add('Verpflegung, €', z, l, near(z, l) ? 'ok' : 'abw',
-            near(z, l) ? '' : `${detail} ${l > z ? `Dir wurden ${r2(l - z)} € mehr bezahlt.` : `Es fehlen ${r2(z - l)} €.`}`);
+            near(z, l) ? '' : `${detail} ${l > z ? `Dir wurden ${de(l - z)} € mehr bezahlt.` : `Es fehlen ${de(z - l)} €.`}`);
         } else {
           add('Verpflegung, €', z, L.verpflegungEuro, 'info', 'Wochenzettel für diesen Monat unvollständig, Vergleich nicht möglich.');
         }
