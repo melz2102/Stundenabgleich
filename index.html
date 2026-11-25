@@ -26,12 +26,7 @@
         <div class="stat"><span class="num" id="count-woche">0</span><span class="lbl">Wochenzettel</span></div>
         <div class="stat"><span class="num" id="count-lohn">0</span><span class="lbl">Lohnzettel</span></div>
       </div>
-      <div class="card">
-        <h2>Monatsauswertung</h2>
-        <p class="muted">Hier erscheinen später Gesamtstunden, Überstunden, Baustellen-, Kranken- und Urlaubstage pro Monat sowie der Abgleich mit dem Lohnzettel.</p>
-        <p class="muted">Lade zuerst deine Zettel hoch.</p>
-        <button class="btn primary" data-goto="add">Zettel hinzufügen</button>
-      </div>
+      <div id="auswertung"></div>
       <div class="card" id="storage-card">
         <h2>Speicher</h2>
         <p class="muted" id="storage-info">Deine Zettel werden nur auf diesem Handy gespeichert.</p>
@@ -90,6 +85,7 @@
   <script src="woche-parser.js"></script>
   <script src="lohn-parser.js"></script>
   <script src="extract.js"></script>
+  <script src="auswertung.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

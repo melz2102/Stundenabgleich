@@ -454,11 +454,106 @@ document.addEventListener('click', e => {
 });
 
 
+
+/* ---------- Monatsauswertung ---------- */
+let gewaehlterMonat = null;
+
+const KAT_TAGE = [
+  ['baustelle', 'Baustelle'], ['arbeit', 'Arbeit (ohne Baustelle)'], ['lehrgang', 'Lehrgang'], ['urlaub', 'Urlaub'],
+  ['krank', 'Krank'], ['feiertag', 'Feiertag'], ['gleitzeit', 'Gleitzeit (GZ)'],
+];
+
+function zahl(v, signed) {
+  if (v == null) return '–';
+  return fmtH(v, signed).replace(/,00$/, '');
+}
+
+async function renderAuswertung(docs) {
+  const box = $('#auswertung');
+  const monate = self.Auswertung.monateMitDaten(docs);
+  if (!monate.length) {
+    box.innerHTML = `
+      <div class="card">
+        <h2>Monatsauswertung</h2>
+        <p class="muted">Sobald du Wochenzettel oder Lohnzettel hochlädst, siehst du hier pro Monat Gesamtstunden, Überstunden, Baustellen-, Kranken- und Urlaubstage und den Abgleich mit dem Lohnzettel.</p>
+        <button class="btn primary" data-goto="add">Zettel hinzufügen</button>
+      </div>`;
+    return;
+  }
+  if (!gewaehlterMonat || !monate.includes(gewaehlterMonat)) gewaehlterMonat = monate[0];
+  const [jahr, monat] = gewaehlterMonat.split('-').map(Number);
+  const r = self.Auswertung.auswerten(docs, jahr, monat);
+
+  const auswahl = `<select id="monat-wahl" class="monat-wahl">${monate.map(m => {
+    const [j, mm] = m.split('-').map(Number);
+    return `<option value="${m}"${m === gewaehlterMonat ? ' selected' : ''}>${MONATE[mm - 1]} ${j}</option>`;
+  }).join('')}</select>`;
+
+  const hinweise = [];
+  if (r.fehlendeKW.length) {
+    hinweise.push(`Es fehlen Wochenzettel für ${r.fehlendeTage.length} Arbeitstag(e) (KW ${r.fehlendeKW.join(', ')}). Die Werte unten gelten nur für die erfassten Tage.`);
+  }
+  if (r.ungeprueft) hinweise.push(`${r.ungeprueft} Wochenzettel noch nicht geprüft.`);
+  if (r.lohn && !r.lohnGeprueft) hinweise.push('Der Lohnzettel ist noch nicht geprüft.');
+
+  const tageHtml = KAT_TAGE.filter(([k]) => r.tage[k] || ['baustelle', 'urlaub', 'krank'].includes(k))
+    .map(([k, l]) => `<div class="kv"><span>${l}</span><strong>${r.tage[k]}</strong></div>`).join('');
+
+  const bsHtml = r.baustellen.length ? r.baustellen.map(b => `
+    <div class="kv"><span>${esc(b.name || 'ohne Name')}${b.kostentraeger ? ` <span class="muted small">${esc(b.kostentraeger)}</span>` : ''}</span>
+      <strong>${zahl(b.stunden)} Std. <span class="muted small">(${b.tage} T.)</span></strong></div>`).join('')
+    : '<p class="muted small">Keine Baustellenstunden erfasst.</p>';
+
+  let abgleichHtml;
+  if (!r.lohn) {
+    abgleichHtml = `<p class="muted">Für ${MONATE[monat - 1]} ${jahr} ist noch kein Lohnzettel gespeichert. Die Abrechnung kommt meist Mitte des Folgemonats.</p>
+      <button class="btn" data-goto="add">Lohnzettel hinzufügen</button>`;
+  } else {
+    const abw = r.abgleich.filter(a => a.status === 'abw').length;
+    abgleichHtml = `
+      <div class="notice ${abw ? 'err' : 'ok'}">${abw ? `<strong>${abw} Abweichung(en)</strong> zwischen Wochenzetteln und Lohnzettel.` : 'Keine Abweichungen gefunden.'}</div>
+      <div class="abgleich">
+        <div class="ab-head"><span></span><span>Wochenzettel</span><span>Lohnzettel</span></div>
+        ${r.abgleich.map(a => `
+          <div class="ab-row ab-${a.status}">
+            <div class="ab-titel">${a.status === 'ok' ? '✓' : a.status === 'abw' ? '✗' : 'ℹ︎'} ${esc(a.titel)}</div>
+            <span>${zahl(a.zettel)}</span><span>${zahl(a.lohn)}</span>
+            ${a.hinweis ? `<div class="ab-hinweis">${esc(a.hinweis)}</div>` : ''}
+          </div>`).join('')}
+      </div>`;
+  }
+
+  box.innerHTML = `
+    <div class="card">
+      <div class="row-between"><h2>Monatsauswertung</h2>${auswahl}</div>
+      ${hinweise.map(h => `<div class="notice">${esc(h)}</div>`).join('')}
+      <div class="stats three">
+        <div class="stat"><span class="num">${zahl(r.ist)}</span><span class="lbl">Ist-Std.</span></div>
+        <div class="stat"><span class="num">${zahl(r.vollstaendig ? r.soll : r.sollErfasst)}</span><span class="lbl">Soll-Std.</span></div>
+        <div class="stat"><span class="num ${r.saldo < 0 ? 'neg' : r.saldo > 0 ? 'pos' : ''}">${zahl(r.saldo, true)}</span><span class="lbl">Saldo</span></div>
+      </div>
+      <div class="kv"><span>davon produktiv</span><strong>${zahl(r.prod)}</strong></div>
+      <div class="kv"><span>davon Urlaub, krank, Feiertag</span><strong>${zahl(r.unprod)}</strong></div>
+      <div class="kv"><span>Mehrstunden</span><strong>${zahl(r.mehr, true)}</strong></div>
+      <div class="kv"><span>Minderstunden (inkl. Gleitzeit)</span><strong>${zahl(r.mind)}</strong></div>
+      ${r.fahrt ? `<div class="kv"><span>Fahrtätigkeit</span><strong>${zahl(r.fahrt)} Std.</strong></div>` : ''}
+      ${r.ausloese ? `<div class="kv"><span>Auslöse / Verpflegung</span><strong>${zahl(r.ausloese)} €</strong></div>` : ''}
+    </div>
+    <div class="card"><h2>Tage</h2>${tageHtml}</div>
+    <div class="card"><h2>Stunden pro Baustelle</h2>${bsHtml}</div>
+    <div class="card"><h2>Abgleich mit dem Lohnzettel</h2>${abgleichHtml}</div>`;
+}
+
+document.addEventListener('change', e => {
+  if (e.target.id === 'monat-wahl') { gewaehlterMonat = e.target.value; renderHome(); }
+});
+
 /* ---------- Übersicht ---------- */
 async function renderHome() {
   const docs = await Docs.all();
   $('#count-woche').textContent = docs.filter(d => d.type === 'woche').length;
   $('#count-lohn').textContent = docs.filter(d => d.type === 'lohn').length;
+  await renderAuswertung(docs);
   if (navigator.storage && navigator.storage.estimate) {
     const est = await navigator.storage.estimate();
     const persisted = navigator.storage.persisted ? await navigator.storage.persisted() : false;
