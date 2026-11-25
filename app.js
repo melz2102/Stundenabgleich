@@ -543,10 +543,32 @@ const KAT_LABEL = {
 const UNPROD_KAT = ['krank', 'urlaub', 'feiertag', 'unproduktiv'];
 let reviewId = null;
 
-function numIn(v) {
-  const n = parseFloat(String(v).replace('−', '-').replace(',', '.'));
-  return isNaN(n) ? 0 : n;
+// Vorzeichen aus der Eingabe: "-4,25", "−4,25" und wie auf dem Lohnzettel "4,25-"
+function vorzeichen(v) {
+  let t = String(v).replace(/[\s€]/g, '').replace(/[−–]/g, '-');
+  let neg = false;
+  if (/^-/.test(t)) { neg = true; t = t.slice(1); }
+  if (/-$/.test(t)) { neg = !neg; t = t.slice(0, -1); }
+  return { neg, t: t.replace(/^\+/, '') };
 }
+function numIn(v) {
+  const { neg, t } = vorzeichen(v);
+  const n = parseFloat(t.replace(',', '.'));
+  return isNaN(n) ? 0 : neg ? -n : n;
+}
+// iPhone-Zahlentastatur hat kein Minus: Felder, die negativ sein können, bekommen einen ±-Knopf
+function vzFeld(input) {
+  return `<span class="mit-vz">${input}<button type="button" class="btn small vz-btn" aria-label="Vorzeichen umschalten">±</button></span>`;
+}
+document.addEventListener('click', e => {
+  const b = e.target.closest('.vz-btn');
+  if (!b) return;
+  const inp = b.parentElement.querySelector('input');
+  if (!inp) return;
+  const { neg, t } = vorzeichen(inp.value.trim());
+  inp.value = (neg ? '' : '-') + (t || '');
+  inp.dispatchEvent(new Event('input', { bubbles: true }));
+});
 
 function inVal(v) {
   return v || v === 0 ? String(v).replace('.', ',') : '';
@@ -562,11 +584,12 @@ function fotoHinweise(r) {
 
 // Geldbetrag aus einem Eingabefeld: "1.787,17" oder "1787,17" oder "1787.17"
 function geldIn(v) {
-  let t = String(v).replace(/[€\s]/g, '').replace('−', '-');
+  let { neg, t } = vorzeichen(v);
   if (t.includes(',')) t = t.replace(/\./g, '').replace(',', '.');
   const n = parseFloat(t);
-  return isNaN(n) ? null : Math.round(n * 100) / 100;
+  return isNaN(n) ? null : Math.round((neg ? -n : n) * 100) / 100;
 }
+const VZ_LOHN = ['azkStand', 'ueberstd', 'urlaubRest'];
 const geldVal = v => (v == null ? '' : v.toFixed(2).replace('.', ','));
 const eur = v => self.Auswertung.eur(v);
 
@@ -600,7 +623,10 @@ function openReviewLohn(d) {
   const monate = MONATE.map((m, i) => `<option value="${i + 1}"${r.monat === i + 1 ? ' selected' : ''}>${m}</option>`).join('');
   const groups = LOHN_FELDER.map(([titel, felder]) => `
     <div class="day"><div class="day-head"><strong>${titel}</strong></div>
-      ${felder.map(([k, l]) => `<label class="field">${l}<input inputmode="decimal" data-lf="${k}" value="${r[k] == null ? '' : inVal(r[k])}"></label>`).join('')}
+      ${felder.map(([k, l]) => {
+        const inp = `<input inputmode="decimal" data-lf="${k}" value="${r[k] == null ? '' : inVal(r[k])}">`;
+        return `<label class="field">${l}${VZ_LOHN.includes(k) ? vzFeld(inp) : inp}</label>`;
+      }).join('')}
     </div>`).join('');
   const posten = r.posten || [];
   const postenHtml = posten.length ? `
@@ -611,7 +637,7 @@ function openReviewLohn(d) {
           <div class="posten-titel">${esc(p.nr)} ${esc(p.bezeichnung)}${p.std && p.menge != null ? ` <span class="muted small">· ${fmtH(p.menge)} Std.</span>` : ''}</div>
           <div class="entry-grid two">
             ${p.std ? `<label class="field">Satz, € pro Std.<input inputmode="decimal" data-pf="${i}:satz" value="${geldVal(p.satz)}"></label>` : '<span></span>'}
-            <label class="field">Betrag, €<input inputmode="decimal" data-pf="${i}:betrag" value="${geldVal(p.betrag)}"></label>
+            <label class="field">Betrag, €${vzFeld(`<input inputmode="decimal" data-pf="${i}:betrag" value="${geldVal(p.betrag)}">`)}</label>
           </div>
         </div>`).join('')}
     </div>` : '';
@@ -735,7 +761,7 @@ async function openReview(id) {
         Summe laut Zettel: ${fmtH(w.summen.prod)} produktive + ${fmtH(w.summen.unprod)} unproduktive Std.<br>
         Saldo <strong>${fmtH(w.saldo, true)}</strong> · Mehrstunden: ${w.mehrstundenGesammelt ? 'sammeln (Arbeitszeitkonto)' : w.mehrstundenVerguetet ? 'vergüten' : 'nichts angekreuzt'}
       </div>
-      <p class="muted small">Vergleiche mit dem Zettel und korrigiere, falls etwas falsch erkannt wurde.</p>
+      <p class="muted small">Vergleiche mit dem Zettel und korrigiere, falls etwas falsch erkannt wurde. Minderstunden kannst du ohne Minus eintippen, die App rechnet sie immer als Minus.</p>
       ${dayHtml}
       <div class="review-actions">
         <button class="btn" data-review-open="${d.id}">Zettel ansehen</button>
@@ -756,8 +782,9 @@ async function saveReview() {
     e.kategorie = get('kategorie');
     const std = numIn(get('std'));
     if (UNPROD_KAT.includes(e.kategorie)) { e.unprod = std; e.prod = 0; } else { e.prod = std; e.unprod = 0; }
-    e.mehr = numIn(get('mehr'));
-    e.mind = numIn(get('mind'));
+    // Mehr ist immer positiv, Minder immer negativ – so braucht man beim Eintippen kein Minus
+    e.mehr = Math.abs(numIn(get('mehr')));
+    e.mind = -Math.abs(numIn(get('mind'))) || 0;
     const desc = get('beschreibung').trim();
     const m = desc.match(/^(\d{4,})\s*·?\s*(.*)$/);
     if (m) { e.kostentraeger = m[1]; e.beschreibung = m[2]; } else { e.kostentraeger = ''; e.beschreibung = desc; }
@@ -1023,7 +1050,7 @@ document.addEventListener('change', e => {
 });
 
 /* ---------- Übersicht ---------- */
-const APP_VERSION = '23';
+const APP_VERSION = '24';
 async function renderHome() {
   const docs = await Docs.all();
   $('#count-woche').textContent = docs.filter(d => d.type === 'woche').length;

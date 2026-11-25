@@ -1,5 +1,5 @@
 // Speichert die App-Dateien, damit sie auch ohne Internet startet.
-const CACHE = 'stundenabgleich-v23';
+const CACHE = 'stundenabgleich-v24';
 const FILES = [
   './',
   'index.html',

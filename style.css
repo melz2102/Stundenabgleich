@@ -145,6 +145,10 @@ html, body { overflow-x: hidden; }
   border-radius: 8px; background: var(--bg); color: var(--text); width: 100%;
 }
 .entry-grid.two { grid-template-columns: 2fr 1fr; }
+.mit-vz { display: flex; gap: 6px; align-items: stretch; }
+.mit-vz input { flex: 1 1 auto; min-width: 0; }
+.mit-vz .vz-btn { flex: 0 0 auto; min-width: 40px; font-size: 18px; padding: 0 8px; }
+.posten .entry-grid.two { grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr); }
 
 .row-between { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 8px; }
 .row-between h2 { margin: 0; }
