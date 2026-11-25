@@ -89,6 +89,10 @@
   }
 
   function prepareImage(bmp, max, filter) {
+    if (filter === 'licht' || filter === 'licht-bw') {
+      const c = beleuchtungAusgleichen(prepareImage(bmp, max, 'none'), filter === 'licht-bw');
+      return drehen(c, winkelSchaetzen(c));
+    }
     // Große Fotos verkleinern, kleine (z.B. per WhatsApp verschickte) bis 2,5-fach vergrößern – Tesseract liest größere Schrift besser
     const scale = Math.min(2.5, max / Math.max(bmp.width, bmp.height));
     const c = document.createElement('canvas');
@@ -102,11 +106,134 @@
     return c;
   }
 
+  // Beleuchtung ausgleichen: Grauwert geteilt durch den weichgezeichneten Hintergrund. Schatten, Farbstich und
+  // ungleichmäßiges Licht verschwinden, das Papier wird weiß und die Schrift dunkel. Danach Kontrast strecken.
+  function beleuchtungAusgleichen(c, binaer) {
+    const w = c.width, h = c.height;
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    const img = ctx.getImageData(0, 0, w, h);
+    const d = img.data;
+    const sw = Math.max(16, Math.round(w / 24)), sh = Math.max(16, Math.round(h / 24));
+    const klein = document.createElement('canvas');
+    klein.width = sw; klein.height = sh;
+    const kctx = klein.getContext('2d');
+    kctx.filter = 'blur(2px)';
+    kctx.drawImage(c, 0, 0, sw, sh);
+    const gross = document.createElement('canvas');
+    gross.width = w; gross.height = h;
+    const gctx = gross.getContext('2d', { willReadFrequently: true });
+    gctx.imageSmoothingQuality = 'high';
+    gctx.drawImage(klein, 0, 0, w, h);
+    const bg = gctx.getImageData(0, 0, w, h).data;
+    const n = w * h;
+    const v = new Float32Array(n);
+    const hist = new Uint32Array(256);
+    for (let i = 0, j = 0; i < n; i++, j += 4) {
+      const g = 0.299 * d[j] + 0.587 * d[j + 1] + 0.114 * d[j + 2];
+      const b = Math.max(1, 0.299 * bg[j] + 0.587 * bg[j + 1] + 0.114 * bg[j + 2]);
+      const x = Math.min(1, g / b);
+      v[i] = x;
+      hist[Math.round(x * 255)]++;
+    }
+    let acc = 0, lo = 0;
+    while (acc < n * 0.02 && lo < 255) acc += hist[lo++];
+    const loV = lo / 255, spanne = Math.max(0.05, 0.92 - loV);
+    for (let i = 0, j = 0; i < n; i++, j += 4) {
+      let x = (v[i] - loV) / spanne;
+      x = x < 0 ? 0 : x > 1 ? 1 : x;
+      if (binaer) x = x < 0.6 ? 0 : 1;
+      d[j] = d[j + 1] = d[j + 2] = Math.round(x * 255);
+      d[j + 3] = 255;
+    }
+    ctx.putImageData(img, 0, 0);
+    return c;
+  }
+
+  // Schräglage schätzen: Bei richtigem Winkel sind die Textzeilen waagerecht und das Zeilenprofil
+  // (dunkle Punkte pro Bildzeile) springt am stärksten zwischen Zeile und Zwischenraum.
+  function winkelSchaetzen(c) {
+    const sw = 500, sh = Math.max(1, Math.round(c.height * sw / c.width));
+    const t = document.createElement('canvas');
+    t.width = sw; t.height = sh;
+    const tctx = t.getContext('2d', { willReadFrequently: true });
+    const x0 = Math.round(sw * 0.1), x1 = Math.round(sw * 0.9);
+    const bewerte = grad => {
+      tctx.setTransform(1, 0, 0, 1, 0, 0);
+      tctx.fillStyle = '#fff';
+      tctx.fillRect(0, 0, sw, sh);
+      tctx.translate(sw / 2, sh / 2);
+      tctx.rotate(grad * Math.PI / 180);
+      tctx.drawImage(c, -sw / 2, -sh / 2, sw, sh);
+      const d = tctx.getImageData(0, 0, sw, sh).data;
+      let vorher = 0, score = 0;
+      for (let y = 0; y < sh; y++) {
+        let z = 0;
+        for (let x = x0, j = (y * sw + x0) * 4; x < x1; x++, j += 4) if (d[j] < 128) z++;
+        if (y) score += (z - vorher) * (z - vorher);
+        vorher = z;
+      }
+      return score;
+    };
+    let best = 0, bestS = -1;
+    for (let a = -8; a <= 8; a += 0.5) { const sc = bewerte(a); if (sc > bestS) { bestS = sc; best = a; } }
+    const grob = best;
+    for (let a = grob - 0.4; a <= grob + 0.41; a += 0.1) { const sc = bewerte(a); if (sc > bestS) { bestS = sc; best = a; } }
+    return Math.round(best * 10) / 10;
+  }
+
+  function drehen(c, grad) {
+    if (Math.abs(grad) < 1) return c; // kleine Schräglagen verkraftet die Erkennung selbst, Drehen macht die Schrift weicher
+    const o = document.createElement('canvas');
+    o.width = c.width; o.height = c.height;
+    const ctx = o.getContext('2d');
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, o.width, o.height);
+    ctx.imageSmoothingQuality = 'high';
+    ctx.translate(o.width / 2, o.height / 2);
+    ctx.rotate(grad * Math.PI / 180);
+    ctx.drawImage(c, -c.width / 2, -c.height / 2);
+    return o;
+  }
+
+  // Fotoqualität grob prüfen: zu dunkel, unscharf, sehr klein (z.B. per WhatsApp verschickt)
+  function fotoPruefen(bmp) {
+    const s = Math.min(1, 1200 / Math.max(bmp.width, bmp.height));
+    const w = Math.round(bmp.width * s), h = Math.round(bmp.height * s);
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(bmp, 0, 0, w, h);
+    const d = ctx.getImageData(0, 0, w, h).data;
+    const g = new Float32Array(w * h);
+    const hist = new Uint32Array(256);
+    for (let i = 0, j = 0; i < g.length; i++, j += 4) {
+      g[i] = 0.299 * d[j] + 0.587 * d[j + 1] + 0.114 * d[j + 2];
+      hist[Math.round(g[i])]++;
+    }
+    let acc = 0, papier = 0;
+    while (acc < g.length * 0.9 && papier < 255) acc += hist[papier++];
+    let sum = 0, sum2 = 0, m = 0;
+    for (let y = 1; y < h - 1; y++) {
+      for (let x = 1; x < w - 1; x++) {
+        const i = y * w + x;
+        const l = 4 * g[i] - g[i - 1] - g[i + 1] - g[i - w] - g[i + w];
+        sum += l; sum2 += l * l; m++;
+      }
+    }
+    const schaerfe = m ? sum2 / m - (sum / m) ** 2 : 0;
+    const hinweise = [];
+    if (papier < 110) hinweise.push('Das Foto ist sehr dunkel. Mach es am besten bei hellem Licht noch einmal.');
+    if (schaerfe < 150) hinweise.push('Das Foto wirkt unscharf. Halte das Handy ruhig und tippe vor dem Auslösen auf den Zettel, damit scharf gestellt wird.');
+    if (Math.max(bmp.width, bmp.height) < 1600) hinweise.push('Das Foto ist klein (vielleicht per WhatsApp verschickt). Das Originalfoto aus der Kamera wird genauer gelesen.');
+    return { hinweise, papier, schaerfe: Math.round(schaerfe), groesse: `${bmp.width}×${bmp.height}` };
+  }
+
   // Mehrere Durchläufe mit unterschiedlicher Aufbereitung: Fotos werden je nach Licht verschieden gut erkannt.
+  // Erster Durchlauf mit ausgeglichener Beleuchtung und geradegerichtet: liest bei Kevins Fotos alle Werte.
   const PASSES = [
+    { max: 3400, filter: 'licht' },
+    { max: 2600, filter: 'licht' },
     { max: 5200, filter: 'none' },
-    { max: 3400, filter: 'grayscale(1) contrast(1.25)' },
-    { max: 2600, filter: 'grayscale(1)' },
   ];
 
   async function createOcrWorker(onPct) {
@@ -187,6 +314,7 @@
       await worker.terminate();
     }
     const merged = self.LohnParser.zusammenfuehren(results);
+    try { merged.foto = fotoPruefen(bmp); } catch (e) { /* nicht kritisch */ }
     merged.rohtext = results[0].rohtext;
     merged.rohtexte = results.map(r => r.rohtext); // alle Durchläufe, damit spätere App-Versionen neu auswerten können
     merged.durchlaeufe = results.length;

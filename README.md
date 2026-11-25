@@ -8,6 +8,10 @@ Handy-App (Web-App/PWA) zum Abgleich von Wochenzetteln (Stundenerfassungsblatt) 
 
 Stand: Wochenzettel als Excel (.xls/.xlsx, SheetJS) oder PDF (pdf.js) werden ausgelesen, handgeschriebene per Foto von Hand eingetragen, Lohnzettel (Foto oder PDF) mit Tesseract.js direkt auf dem Handy. Alle Werte lassen sich prüfen und korrigieren. Monatsauswertung mit Abgleich gegen den Lohnzettel.
 
+## Foto-Erkennung der Lohnzettel (`extract.js`)
+
+Vor der Texterkennung wird das Foto aufbereitet: Beleuchtung ausgleichen (Grauwert geteilt durch den weichgezeichneten Hintergrund, dann Kontrast strecken), Schräglage über das Zeilenprofil schätzen und ab 1° geraderichten. Damit liest Tesseract Kevins Oktober-Foto im ersten Durchlauf vollständig (vorher 9 von 20 Werten), auch mit starkem Schatten oder als verkleinertes WhatsApp-Foto. Ein genaueres Sprachmodell (tessdata_best) brachte keine Verbesserung, war aber 60 % langsamer. `fotoPruefen` warnt bei dunklen, unscharfen oder sehr kleinen Fotos.
+
 ## Geldbeträge und Jahresübersicht
 
 - **Geldbeträge** (Karte unter dem Abgleich): Für jede Lohnart mit Stunden wird Stunden × Satz mit dem Betrag verglichen. Ist der Faktor auf dem Foto unleserlich, wird er aus Betrag ÷ Stunden berechnet, wenn das glatt aufgeht. Hinweis, wenn sich der Stundensatz gegenüber dem letzten Lohnzettel ändert oder Urlaub/Krank/AZK mit einem anderen Satz als der Stundenlohn bezahlt werden. Summe aller Beträge zum Vergleich mit dem Gesamt-Brutto. Bei großen Fotos liest `extract.js` die Spalte „Betrag“ gezielt nach (`betraegeNachlesen`).

@@ -248,7 +248,8 @@ async function handleFiles(fileList) {
         if (data.monat && data.jahr) doc.period = `${MONATE[data.monat - 1]} ${data.jahr}`;
         doc.status = 'ausgelesen';
         readMsg = `<br>Ausgelesen: ${fmtH(data.bezahltStd)} bezahlte Std., Arbeitszeitkonto ${fmtH(data.azkStand, true)}, Resturlaub ${fmtH(data.urlaubRest)} Tage.`
-          + (data.warnungen.length ? ` <strong>${data.warnungen.length} Hinweis(e), bitte prüfen.</strong>` : '');
+          + (data.warnungen.length ? ` <strong>${data.warnungen.length} Hinweis(e), bitte prüfen.</strong>` : '')
+          + fotoHinweise(data).map(h => `<br>📷 ${esc(h)}`).join('');
       } catch (e) {
         doc.status = 'fehler';
         doc.readError = e.message || String(e);
@@ -534,6 +535,14 @@ function inVal(v) {
   return v || v === 0 ? String(v).replace('.', ',') : '';
 }
 
+// Hinweise zur Fotoqualität (dunkel, unscharf; "klein" nur, wenn beim Auslesen etwas nicht gepasst hat)
+function fotoHinweise(r) {
+  const f = r && r.foto;
+  if (!f || !f.hinweise) return [];
+  const probleme = (r.warnungen || []).length > 0;
+  return f.hinweise.filter(h => probleme || !/klein/.test(h));
+}
+
 // Geldbetrag aus einem Eingabefeld: "1.787,17" oder "1787,17" oder "1787.17"
 function geldIn(v) {
   let t = String(v).replace(/[€\s]/g, '').replace('−', '-');
@@ -595,6 +604,7 @@ function openReviewLohn(d) {
   $('#viewer-title').textContent = 'Prüfen: ' + (d.period || d.name);
   $('#viewer-body').innerHTML = `
     <div class="review">
+      ${fotoHinweise(Object.assign({}, r, { warnungen })).map(h => `<div class="notice warn-note">📷 ${esc(h)}</div>`).join('')}
       ${warnungen.length ? `<div class="notice err">${warnungen.map(esc).join('<br>')}${kannNeuLesen ? '<br>Tipp: „Neu auslesen“ liest das Foto mit der neuesten App-Version noch einmal.' : ''}</div>` : ''}
       ${d.readError ? `<div class="notice err">Automatisches Auslesen hat nicht geklappt: ${esc(d.readError)}<br>Du kannst die Werte hier von Hand eintragen.</div>` : ''}
       <p class="muted small">Vergleiche die Werte mit deinem Lohnzettel. Leere Felder kommen auf dem Zettel nicht vor. ${r.quelle === 'foto' ? 'Bei Fotos verliest sich die Erkennung manchmal, also bitte genau hinschauen.' : ''}</p>
