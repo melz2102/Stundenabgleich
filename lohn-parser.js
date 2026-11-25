@@ -53,6 +53,7 @@
       art: 'lohn', monat: null, jahr: null, abrechnungsdatum: null,
       stundenlohn: null, stundensatz: null, fahrgeldStd: null, azkAbbau: null, azkAufbau: null, ueberstundenLohnart: null,
       urlaubStd: null, krankStd: null, feiertagStd: null, sonstigeStd: null,
+      verpflegungEuro: null, verpflegung: [],
       azkStand: null,
       urlaubAnspruch: null, urlaubGenommen: null, urlaubRest: null,
       zeitlohnStd: null, ueberstd: null, bezahltStd: null,
@@ -94,6 +95,24 @@
       else if (/feiertag/.test(b)) add('feiertagStd', menge);
       else add('sonstigeStd', menge);
     }
+
+    // Verpflegungsmehraufwand (z.B. "2045 Verpflegungsmehraufw 14€ stpfl ... 56,00"): Betrag am Zeilenende.
+    // Ein Betrag zählt nur, wenn er ein Vielfaches des Tagessatzes ist – so fallen verlesene Zahlen auf.
+    const gesehen = new Set();
+    let verpflUnsicher = false;
+    for (const raw of lines) {
+      const l = fixDigits(raw);
+      const v = l.match(/^\W{0,3}(\d{4})\s+(.*verpfl.*?)\s+(\d{1,3}(?:\.\d{3})*,\d{2})\s*\W{0,3}$/i);
+      if (!v || gesehen.has(v[1])) continue;
+      gesehen.add(v[1]);
+      const betrag = deNum(v[3]);
+      const satzM = v[2].match(/\b(\d{1,2})\s*(?:€|e|eur)/i);
+      const satz = satzM ? parseInt(satzM[1], 10) : null;
+      if (satz && Math.abs(betrag / satz - Math.round(betrag / satz)) > 0.001) { verpflUnsicher = true; continue; }
+      r.verpflegung.push({ nr: v[1], satz, betrag, tage: satz ? Math.round(betrag / satz) : null });
+      add('verpflegungEuro', betrag);
+    }
+    if (verpflUnsicher) r.verpflegungEuro = null;
 
     // Arbeitszeitkonto-Stand ("AZK-Std. 4,25-")
     const azk = all.match(/AZK[-\s]?Std\.?\s*:?\s*(-?\d{1,4}(?:\.\d{3})*,\d{2}\s*-?)/i);
@@ -162,7 +181,7 @@
   }
 
   const FELDER = ['monat', 'jahr', 'abrechnungsdatum', 'stundenlohn', 'stundensatz', 'fahrgeldStd', 'azkAbbau', 'azkAufbau',
-    'ueberstundenLohnart', 'urlaubStd', 'krankStd', 'feiertagStd', 'sonstigeStd', 'azkStand',
+    'ueberstundenLohnart', 'urlaubStd', 'krankStd', 'feiertagStd', 'sonstigeStd', 'verpflegungEuro', 'azkStand',
     'urlaubAnspruch', 'urlaubGenommen', 'urlaubRest', 'zeitlohnStd', 'ueberstd', 'bezahltStd'];
 
   // Mehrere Erkennungsdurchläufe zusammenführen: pro Feld gewinnt der häufigste Wert, bei Gleichstand der frühere Durchlauf.
@@ -181,6 +200,8 @@
       out[f] = best ? best.v : null;
       out['_' + f + 'Sicher'] = best ? best.n >= 2 || results.length === 1 : false;
     }
+    const vq = results.find(r => r.verpflegungEuro === out.verpflegungEuro);
+    out.verpflegung = vq && vq.verpflegung ? vq.verpflegung : [];
     // Zusammengehörige Werte, die sich gegenseitig bestätigen, gemeinsam aus einem stimmigen Durchlauf nehmen
     const near = (a, b) => Math.abs(a - b) < 0.01;
     const GRUPPEN = [

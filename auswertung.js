@@ -74,7 +74,7 @@
       soll: monatssoll(jahr, monat), sollErfasst: 0,
       ist: 0, prod: 0, unprod: 0, mehr: 0, mind: 0, saldo: 0, mehrVerguetet: 0,
       tage: { baustelle: 0, arbeit: 0, krank: 0, urlaub: 0, feiertag: 0, gleitzeit: 0, lehrgang: 0, unproduktiv: 0, sonstiges: 0 },
-      baustellen: [], ausloese: 0, fahrt: 0, stdKat: { urlaub: 0, krank: 0, feiertag: 0 },
+      baustellen: [], ausloese: 0, fahrt: 0, verpflTage: {}, stdKat: { urlaub: 0, krank: 0, feiertag: 0 },
       fehlendeTage: [], fehlendeKW: [], ungeprueft: 0, vollstaendig: false,
       lohn: null, lohnVormonat: null, abgleich: [],
     };
@@ -100,6 +100,7 @@
         // "Mehrstunden vergüten" angekreuzt: der Saldo dieser Tage wird ausgezahlt statt aufs Arbeitszeitkonto gebucht
         if (t.verguetet) res.mehrVerguetet += e.mehr + e.mind;
         res.ausloese += e.ausloese || 0; res.fahrt += e.fahrt || 0;
+        if (e.ausloese > 0) res.verpflTage[e.ausloese] = (res.verpflTage[e.ausloese] || 0) + 1;
         if (e.kategorie in res.stdKat) res.stdKat[e.kategorie] += e.prod + e.unprod;
         kats.add(e.kategorie);
         if (e.prod > 0 && (e.kategorie === 'baustelle' || e.kategorie === 'arbeit')) {
@@ -209,9 +210,32 @@
             `Lohnzettel: ${L.urlaubGenommen} Tage genommen im Jahr, Rest ${L.urlaubRest ?? '–'}. Für den Monatsvergleich fehlt der Lohnzettel vom Vormonat.`);
         }
       }
-      // 7) Fahrgeld
-      if (L.fahrgeldStd != null) {
-        add('Fahrgeld-Stunden', res.fahrt || null, L.fahrgeldStd, 'info', 'Nur zur Info, die Regel dahinter kenne ich noch nicht.');
+      // 7) Fahrgeld-Stunden = Stunden "Vergütung Fahrtätigkeit" laut Wochenzetteln
+      if (L.fahrgeldStd != null || res.fahrt > 0) {
+        const z = r2(res.fahrt), l = r2(L.fahrgeldStd || 0);
+        if (res.vollstaendig) {
+          add('Fahrgeld-Stunden', z, l, near(z, l) ? 'ok' : 'abw',
+            near(z, l) ? 'Passt zur Fahrtätigkeit auf deinen Wochenzetteln.' : `Laut Wochenzetteln ${z} Std. Fahrtätigkeit, abgerechnet ${l} Std.`);
+        } else {
+          add('Fahrgeld-Stunden', z, l, 'info', 'Wochenzettel für diesen Monat unvollständig, Vergleich nicht möglich.');
+        }
+      }
+      // 8) Verpflegung (Auslöse/Verpfl. in €)
+      if (L.verpflegungEuro != null || res.ausloese > 0) {
+        const z = r2(res.ausloese);
+        if (L.verpflegungEuro == null) {
+          add('Verpflegung, €', z, null, 'info', 'Auf dem Lohnzettel nicht erkannt. Du kannst den Betrag beim Prüfen eintragen.');
+        } else if (res.vollstaendig) {
+          const l = r2(L.verpflegungEuro);
+          const tageText = m => Object.keys(m).map(Number).sort((a, b) => a - b).map(k => `${m[k]} × ${k} €`).join(', ');
+          const lohnTage = {};
+          (L.verpflegung || []).forEach(v => { if (v.satz && v.tage) lohnTage[v.satz] = (lohnTage[v.satz] || 0) + v.tage; });
+          const detail = `Wochenzettel: ${tageText(res.verpflTage) || '–'}.` + (Object.keys(lohnTage).length ? ` Lohnzettel: ${tageText(lohnTage)}.` : '');
+          add('Verpflegung, €', z, l, near(z, l) ? 'ok' : 'abw',
+            near(z, l) ? '' : `${detail} ${l > z ? `Dir wurden ${r2(l - z)} € mehr bezahlt.` : `Es fehlen ${r2(z - l)} €.`}`);
+        } else {
+          add('Verpflegung, €', z, L.verpflegungEuro, 'info', 'Wochenzettel für diesen Monat unvollständig, Vergleich nicht möglich.');
+        }
       }
     }
     return res;

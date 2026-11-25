@@ -18,5 +18,7 @@ Abgeleitet aus der Abrechnung Oktober 2026, bitte bei Bedarf anpassen (`auswertu
 - Fehlstunden (Saldo < 0) werden vom Arbeitszeitkonto abgebaut.
 - Mehrstunden gehen aufs Arbeitszeitkonto ("sammeln" oder nichts angekreuzt). Ist auf dem Wochenzettel "vergüten" angekreuzt, wird der Saldo dieser Woche als Überstunden ausgezahlt.
 - AZK-Std. auf dem Lohnzettel ist der Kontostand ("4,25-" = minus 4,25 Std.). Seine Veränderung zum Vormonat muss dem gesammelten Monatssaldo entsprechen.
+- Fahrgeld-Std. (Lohnart 1800) = Stunden "Vergütung Fahrtätigkeit" laut Wochenzetteln (mit August 2026 bestätigt).
+- Verpflegungsmehraufwand (Lohnarten 2045/2046, 14 € bzw. 28 € pro Tag) = Summe "Auslöse/Verpfl." laut Wochenzetteln.
 
 Von Kevin bestätigt am 25.11.2026.

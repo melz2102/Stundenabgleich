@@ -122,6 +122,34 @@
     return worker;
   }
 
+  // Die Spalte "Betrag" steht hinter einem senkrechten Strich und wird bei großen Fotos oft übersprungen.
+  // Dann lesen wir nur diese Spalte neben den Lohnarten noch einmal und ordnen die Beträge zeilenweise zu.
+  async function verpflegungNachlesen(worker, canvas, data) {
+    const istLa = l => /^\W{0,3}\d{4}\s+[A-Za-zÄÖÜäöü]/.test(l.text.trim());
+    const alle = (data.lines || []).filter(istLa).sort((a, b) => a.bbox.y0 - b.bbox.y0);
+    const start = alle.findIndex(l => /verpfl/i.test(l.text));
+    if (start < 0) return null;
+    const rowH = alle.reduce((s, l) => s + l.bbox.y1 - l.bbox.y0, 0) / alle.length;
+    // zusammenhängender Lohnarten-Block um die Verpflegungszeilen
+    let a = start, b = start;
+    while (a > 0 && alle[a].bbox.y0 - alle[a - 1].bbox.y0 < 2.5 * rowH) a--;
+    while (b < alle.length - 1 && alle[b + 1].bbox.y0 - alle[b].bbox.y0 < 2.5 * rowH) b++;
+    const block = alle.slice(a, b + 1);
+    const ohneBetrag = block.filter(l => !/\d,\d{2}\s*\W{0,3}$/.test(l.text.trim()));
+    const left = Math.round(Math.max(...(ohneBetrag.length ? ohneBetrag : block).map(l => l.bbox.x1)) + rowH);
+    const top = Math.max(0, Math.round(Math.min(...block.map(l => l.bbox.y0)) - rowH));
+    const bottom = Math.min(canvas.height, Math.round(Math.max(...block.map(l => l.bbox.y1)) + rowH));
+    if (left >= canvas.width - 2 * rowH || bottom <= top) return null;
+    await worker.setParameters({ tessedit_pageseg_mode: '6' });
+    const { data: col } = await worker.recognize(canvas, { rectangle: { left, top, width: canvas.width - left, height: bottom - top } });
+    await worker.setParameters({ tessedit_pageseg_mode: '3' });
+    const betraege = col.text.split('\n').map(z => (z.match(/(\d{1,3}(?:\.\d{3})*,\d{2})\s*\W{0,3}$/) || [])[1]).filter(Boolean);
+    if (betraege.length !== block.length) return null;
+    const text = block.map((l, i) => `${l.text.trim()}   ${betraege[i]}`).join('\n');
+    const r = self.LohnParser.parseLohnzettel(text);
+    return r.verpflegungEuro != null ? { verpflegungEuro: r.verpflegungEuro, verpflegung: r.verpflegung } : null;
+  }
+
   async function ocrLohnzettel(src, onProgress) {
     const bmp = await toBitmap(src);
     let passIdx = 0;
@@ -132,9 +160,13 @@
     try {
       for (passIdx = 0; passIdx < PASSES.length; passIdx++) {
         const { max, filter } = PASSES[passIdx];
-        const { data } = await worker.recognize(prepareImage(bmp, max, filter));
+        const canvas = prepareImage(bmp, max, filter);
+        const { data } = await worker.recognize(canvas);
         const r = self.LohnParser.parseLohnzettel(data.text);
         r.rohtext = data.text;
+        if (passIdx === 0 && r.verpflegungEuro == null && /verpfl/i.test(data.text)) {
+          try { Object.assign(r, await verpflegungNachlesen(worker, canvas, data)); } catch (e) { /* dann von Hand eintragen */ }
+        }
         results.push(r);
         if (results.length >= 2) {
           const merged = self.LohnParser.zusammenfuehren(results);

@@ -496,6 +496,7 @@ const LOHN_FELDER = [
     ['feiertagStd', 'Feiertagsstunden'],
     ['sonstigeStd', 'Sonstige bezahlte Std. (andere Lohnarten)'],
     ['fahrgeldStd', 'Fahrgeld, Std.'],
+    ['verpflegungEuro', 'Verpflegung (alle Sätze zusammen), €'],
     ['zeitlohnStd', 'Zeitlohn Std. (Kopf)'],
     ['ueberstd', 'Überstunden (Kopf)'],
     ['azkAbbau', 'Abbau Arbeitszeitkonto, Std.'],
@@ -549,6 +550,9 @@ async function saveReviewLohn(d) {
     else r[k] = v === '' ? null : numIn(v);
   });
   r.warnungen = [];
+  // Verpflegung von Hand geändert: Aufteilung nach Tagessätzen passt dann nicht mehr
+  const vSumme = (r.verpflegung || []).reduce((s, v) => s + v.betrag, 0);
+  if (r.verpflegungEuro == null || Math.abs(vSumme - r.verpflegungEuro) > 0.01) r.verpflegung = [];
   d.data = r;
   if (r.monat && r.jahr) d.period = `${MONATE[r.monat - 1]} ${r.jahr}`;
   d.readError = null;
@@ -774,12 +778,19 @@ async function repariereAlteZettel() {
     const docs = await Docs.all();
     for (const d of docs) {
       // Ältere Lohnzettel: Urlaubs-, Krank-, Feiertags- und sonstige Stunden aus dem gespeicherten Erkennungstext nachtragen
-      if (d.type === 'lohn' && d.data && !('urlaubStd' in d.data)) {
+      if (d.type === 'lohn' && d.data && (!('urlaubStd' in d.data) || !('verpflegungEuro' in d.data))) {
         const neu = d.data.rohtext ? self.LohnParser.parseLohnzettel(d.data.rohtext) : {};
-        let gefunden = false;
-        self.LohnParser.ABWESENHEIT.forEach(f => { d.data[f] = neu[f] ?? null; if (neu[f]) gefunden = true; });
-        self.LohnParser.pruefe(d.data);
-        if (gefunden && d.status === 'geprueft') d.status = 'ausgelesen'; // neue Werte bitte noch einmal ansehen
+        if (!('urlaubStd' in d.data)) {
+          let gefunden = false;
+          self.LohnParser.ABWESENHEIT.forEach(f => { d.data[f] = neu[f] ?? null; if (neu[f]) gefunden = true; });
+          self.LohnParser.pruefe(d.data);
+          if (gefunden && d.status === 'geprueft') d.status = 'ausgelesen'; // neue Werte bitte noch einmal ansehen
+        }
+        // Verpflegung (€) nachtragen
+        if (!('verpflegungEuro' in d.data)) {
+          d.data.verpflegungEuro = neu.verpflegungEuro ?? null;
+          d.data.verpflegung = neu.verpflegung || [];
+        }
         await Docs.add(d);
         continue;
       }
