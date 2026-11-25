@@ -52,10 +52,14 @@
         docId: d.id, vom: d.data.vomIso, zoom: 1,
         baustelle: d.data.baustelle || '',
         verguetet: !!d.data.mehrstundenVerguetet,
-        tage: d.data.tage.map(t => t.eintraege.map(e => ({
-          kategorie: e.kategorie, std: e.prod + e.unprod,
-          beschreibung: [e.kostentraeger, e.beschreibung].filter(Boolean).join(' · '),
-        }))),
+        // Tage über das Datum zuordnen: leere Tage (z.B. der andere Teil einer Woche am Monatswechsel) werden nicht gespeichert
+        tage: TAGE.map((_, ti) => {
+          const t = d.data.tage.find(x => x.datum === isoD(addDays(parseIso(d.data.vomIso), ti)));
+          return t ? t.eintraege.map(e => ({
+            kategorie: e.kategorie, std: e.prod + e.unprod,
+            beschreibung: [e.kostentraeger, e.beschreibung].filter(Boolean).join(' · '),
+          })) : [];
+        }),
       };
     }
     let mo;
@@ -136,7 +140,7 @@
           <label class="field">Baustelle diese Woche (für leere Felder)<input data-h-top="baustelle" value="${esc(state.baustelle)}" placeholder="z.B. 732437 · Pathologie Tübingen"></label>
           <label class="check"><input type="checkbox" data-h-top="verguetet" ${state.verguetet ? 'checked' : ''}> Mehrstunden vergüten (sonst sammeln)</label>
         </div>
-        <p class="muted small">Die Tage sind mit dem Soll vorausgefüllt (Mo–Do 8,5 / Fr 5 Std.). Ändere nur, was auf deinem Zettel anders ist. Mehr- und Minderstunden rechnet die App selbst aus.</p>
+        <p class="muted small">Die Tage sind mit dem Soll vorausgefüllt (Mo–Do 8,5 / Fr 5 Std.). Ändere nur, was auf deinem Zettel anders ist. Mehr- und Minderstunden rechnet die App selbst aus. Gilt der Zettel nur für einen Teil der Woche (Monatswechsel), lösche die Zeilen der übrigen Tage mit ✕.</p>
         ${tageHtml}
         <div class="card small">Saldo der Woche: <strong id="hand-saldo">${saldoHtml(saldo)}</strong></div>
         <div class="review-actions">
@@ -195,7 +199,7 @@
         summe: { mehr: sum('mehr'), mind: sum('mind'), prod: sum('prod'), unprod: sum('unprod') },
         kategorien: Array.from(new Set(liste.map(e => e.kategorie))),
       };
-    });
+    }).filter(t => t.eintraege.length); // leere Tage gehören nicht zu diesem Zettel (z.B. Teilwoche am Monatswechsel)
     const summen = { garantie: 0, erschwernis: 0, ausloese: 0, fahrt: 0, bereitschaft: 0, pause: 0 };
     ['mehr', 'mind', 'prod', 'unprod'].forEach(k => { summen[k] = Math.round(tage.reduce((s, t) => s + t.summe[k], 0) * 100) / 100; });
     d.data = {

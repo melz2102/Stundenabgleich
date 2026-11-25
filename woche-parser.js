@@ -14,6 +14,32 @@
   const NUM_COLS = ['mehr', 'mind', 'prod', 'unprod', 'garantie', 'erschwernis', 'ausloese', 'fahrt', 'bereitschaft', 'pause'];
   const DAY_NAMES = ['Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag/'];
 
+  /*
+   * Teilwochen am Monatswechsel: Ein Zettel gilt dann nur für einen Teil der Woche (z.B. vom 31.08. bis 31.08.
+   * und ein zweiter vom 01.09. bis 04.09.). Die Tageszeilen sind trotzdem Montag bis Freitag – das Datum einer
+   * Zeile ist daher immer Montag der Woche + Zeilennummer, und leere Zeilen außerhalb von vom–bis gehören
+   * zum anderen Zettel und werden weggelassen.
+   */
+  const parseDE = s => { const m = s && String(s).match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/); return m ? new Date(+m[3], +m[2] - 1, +m[1], 12) : null; };
+  const montagVon = dt => new Date(dt.getFullYear(), dt.getMonth(), dt.getDate() - ((dt.getDay() + 6) % 7), 12);
+  const plusT = (dt, n) => new Date(dt.getFullYear(), dt.getMonth(), dt.getDate() + n, 12);
+  const isoTag = dt => `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+  const tagIndex = name => ['mo', 'di', 'mi', 'do', 'fr', 'sa'].indexOf(String(name || '').slice(0, 2).toLowerCase());
+
+  // Setzt die Daten der Tageszeilen aus "vom" und entfernt leere Zeilen außerhalb vom–bis. Gibt true zurück, wenn sich etwas geändert hat.
+  function korrigiereTage(data) {
+    const vomD = parseDE(data.vom);
+    if (!vomD || !Array.isArray(data.tage)) return false;
+    const mo = montagVon(vomD);
+    const bisD = parseDE(data.bis) || plusT(mo, 6);
+    const von = isoTag(vomD), bis = isoTag(bisD);
+    const vorher = JSON.stringify(data.tage.map(t => t.datum));
+    data.tage.forEach(t => { const i = tagIndex(t.tag); if (i >= 0) t.datum = isoTag(plusT(mo, i)); });
+    data.tage = data.tage.filter(t => (t.eintraege && t.eintraege.length) || !t.datum || (t.datum >= von && t.datum <= bis));
+    if (!data.jahr) data.jahr = plusT(mo, 3).getFullYear();
+    return JSON.stringify(data.tage.map(t => t.datum)) !== vorher;
+  }
+
   function colOf(x) {
     let name = COLS[0][0];
     for (const [n, left] of COLS) if (x >= left - 2) name = n;
@@ -69,7 +95,7 @@
     const bis = rightOf(/^bis:$/, 60);
     // Jahr nicht eingetragen? Dann aus "vom:" (Jahr des Donnerstags = Jahr der Kalenderwoche)
     const vomM = vom && vom.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
-    if (!jahr && vomM) jahr = new Date(+vomM[3], +vomM[2] - 1, +vomM[1] + 3, 12).getFullYear();
+    if (!jahr && vomM) jahr = plusT(montagVon(new Date(+vomM[3], +vomM[2] - 1, +vomM[1], 12)), 3).getFullYear();
     const personalnummer = rightOf(/^Personalnummer:$/);
     const name = rightOf(/^Name:$/);
 
@@ -147,13 +173,15 @@
       if (r(calc[k]) !== r(summen[k])) warnungen.push(`Summe ${k}: Tage ergeben ${r(calc[k])}, Zettel sagt ${r(summen[k])}`);
     });
 
-    return {
+    const out = {
       art: 'woche', jahr, kw, vom, bis, personalnummer, name,
       tage, summen, saldo,
       mehrstundenVerguetet: kreuz(/^Mehrstunden vergüten$/),
       mehrstundenGesammelt: kreuz(/^Mehrstunden sammeln$/),
       warnungen,
     };
+    korrigiereTage(out);
+    return out;
   }
 
   /*
@@ -210,7 +238,7 @@
     const persCell = rightValue(findCell(/^Personalnummer/i));
     const nameCell = rightValue(findCell(/^Name:?$/i));
     let jahr = jahrCell ? jahrCell.v : null;
-    if (!jahr && vomDate) jahr = new Date(vomDate.getTime() + 3 * 86400000).getFullYear();
+    if (!jahr && vomDate) jahr = plusT(montagVon(vomDate), 3).getFullYear();
 
     // Spalten über die Überschriften zuordnen
     const hdr = findCell(/^Mehr/i);
@@ -286,7 +314,7 @@
       if (summePos && t !== r2(summen[k])) warnungen.push(`Summe ${k}: Tage ergeben ${t}, Zettel sagt ${r2(summen[k])}`);
     });
 
-    return {
+    const out = {
       art: 'woche', quelle: 'excel', jahr, kw: kwCell ? kwCell.v : null,
       vom: vomDate ? fmtD(vomDate) : null, bis: bisDate ? fmtD(bisDate) : null,
       personalnummer: persCell ? xstr(persCell.v) : null, name: nameCell ? xstr(nameCell.v) : null,
@@ -295,9 +323,11 @@
       mehrstundenGesammelt: kreuz(/^Mehrstunden sammeln/i),
       warnungen,
     };
+    korrigiereTage(out);
+    return out;
   }
 
-  const api = { parseWochenzettel: parse, parseWochenzettelExcel: parseExcel };
+  const api = { parseWochenzettel: parse, parseWochenzettelExcel: parseExcel, korrigiereTage };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.WochenParser = api;
 })(typeof self !== 'undefined' ? self : this);

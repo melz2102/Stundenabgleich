@@ -43,6 +43,9 @@
     docs.filter(d => d.type === 'woche' && d.data && d.data.tage).sort((a, b) => rang(a) - rang(b)).forEach(doc => {
       doc.data.tage.forEach(t => {
         if (!t.datum) return;
+        // Ein leerer Tag überschreibt keinen Tag mit Einträgen (z.B. zwei Zettel für eine Woche am Monatswechsel)
+        const vorher = map.get(t.datum);
+        if (vorher && vorher.eintraege.length && !(t.eintraege && t.eintraege.length)) return;
         map.set(t.datum, {
           datum: t.datum, tag: t.tag, eintraege: t.eintraege,
           verguetet: !!doc.data.mehrstundenVerguetet, geprueft: doc.status === 'geprueft', kw: doc.data.kw,

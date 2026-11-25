@@ -314,13 +314,35 @@ function einordnen(d) {
   return null;
 }
 
-function wochenImMonat(key) {
+const isoVon = dt => `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+const ausIso = s => { const [y, m, d] = s.split('-').map(Number); return mittag(y, m - 1, d); };
+
+// Arbeitstage (Mo–Fr, ISO-Datum), die ein Wochenzettel abdeckt. Am Monatswechsel gibt es oft zwei Zettel
+// für eine Woche (z.B. 31.08. und 01.–04.09.), jeder deckt dann nur seinen Teil ab.
+function wocheArbeitstage(d) {
+  const tage = ((d.data && d.data.tage) || []).map(t => t.datum).filter(Boolean)
+    .filter(x => { const wd = ausIso(x).getDay(); return wd >= 1 && wd <= 5; });
+  if (tage.length) return Array.from(new Set(tage)).sort();
+  const mo = wocheMontag(d);
+  return mo ? [0, 1, 2, 3, 4].map(i => isoVon(plusTage(mo, i))) : [];
+}
+
+// Alle Wochen mit mindestens einem Arbeitstag im Monat, jeweils nur mit den Tagen dieses Monats
+function wochenAbschnitte(key) {
   const [y, m] = key.split('-').map(Number);
-  let mo = montagDerWoche(mittag(y, m - 1, 1));
-  if (plusTage(mo, 2).getMonth() !== m - 1) mo = plusTage(mo, 7);
   const out = [];
-  while (plusTage(mo, 2).getMonth() === m - 1) { out.push(mo); mo = plusTage(mo, 7); }
+  for (let mo = montagDerWoche(mittag(y, m - 1, 1)); mo <= mittag(y, m, 0); mo = plusTage(mo, 7)) {
+    const tage = [0, 1, 2, 3, 4].map(i => plusTage(mo, i)).filter(t => t.getMonth() === m - 1).map(isoVon);
+    if (tage.length) out.push({ montag: mo, tage });
+  }
   return out;
+}
+
+function zeitraumText(isoTage) {
+  if (!isoTage.length) return '';
+  const a = ausIso(isoTage[0]), b = ausIso(isoTage[isoTage.length - 1]);
+  if (isoTage.length === 1) return kurzDatum(a);
+  return a.getMonth() === b.getMonth() ? `${String(a.getDate()).padStart(2, '0')}.–${kurzDatum(b)}` : `${kurzDatum(a)}–${kurzDatum(b)}`;
 }
 
 function monateZwischen(von, bis) {
@@ -335,9 +357,9 @@ function monateZwischen(von, bis) {
 }
 
 function docItemHtml(d, dup) {
-  const ord = einordnen(d);
-  const titel = d.type === 'woche' && ord && ord.montag
-    ? `KW ${kwVon(ord.montag)} · ${kurzDatum(ord.montag)}–${kurzDatum(plusTage(ord.montag, 4))}`
+  const wt = d.type === 'woche' ? wocheArbeitstage(d) : [];
+  const titel = wt.length
+    ? `KW ${kwVon(ausIso(wt[0]))} · ${zeitraumText(wt)}`
     : d.type === 'lohn' && d.period ? `Lohnzettel ${d.period}` : (d.period || d.name);
   const statusText = isHandWoche(d) && d.status === 'neu' ? 'Noch nicht eingetragen' : (STATUS_LABEL[d.status] || esc(d.status));
   const pruefKnopf = d.data
@@ -366,21 +388,34 @@ async function renderDocs() {
   const list = $('#doc-list');
   const heute = mittag(new Date().getFullYear(), new Date().getMonth(), new Date().getDate());
 
+  const heuteIso = isoVon(heute);
+  const wTage = new Map(docs.filter(d => d.type === 'woche').map(d => [d.id, wocheArbeitstage(d)]));
+
+  // Wochenzettel erscheinen in jedem Monat, in dem sie Tage abdecken; Lohnzettel im Abrechnungsmonat
   const ohneDatum = [];
   const proMonat = new Map();
+  const push = (key, x) => { if (!proMonat.has(key)) proMonat.set(key, []); proMonat.get(key).push(x); };
   for (const d of shown) {
+    if (d.type === 'woche') {
+      const t = wTage.get(d.id);
+      if (!t.length) { ohneDatum.push(d); continue; }
+      for (const key of new Set(t.map(x => x.slice(0, 7)))) push(key, { d, sort: ausIso(t.find(x => x.startsWith(key))).getTime() });
+      continue;
+    }
     const o = einordnen(d);
     if (!o) { ohneDatum.push(d); continue; }
-    if (!proMonat.has(o.key)) proMonat.set(o.key, []);
-    proMonat.get(o.key).push({ d, o });
+    push(o.key, { d, sort: o.sort });
   }
 
   // Lückenlos alle Monate zwischen dem ersten und letzten Wochenzettel zeigen
-  const wochenMonate = docs.filter(d => d.type === 'woche').map(einordnen).filter(Boolean).map(o => o.key).sort();
+  const wochenMonate = Array.from(new Set([].concat(...wTage.values()).map(x => x.slice(0, 7)))).sort();
   const zeigeLuecken = filter !== 'lohn' && wochenMonate.length > 0;
   let monate = Array.from(proMonat.keys());
   if (zeigeLuecken) monate = Array.from(new Set(monate.concat(monateZwischen(wochenMonate[0], wochenMonate[wochenMonate.length - 1]))));
   monate.sort().reverse();
+
+  // Doppelt = zwei Zettel für dieselben Tage (zwei Teilwochen am Monatswechsel sind nicht doppelt)
+  const doppelt = (d, liste) => liste.some(x => x.d !== d && wTage.get(x.d.id).some(t => wTage.get(d.id).includes(t)));
 
   let html = '';
   if (ohneDatum.length) {
@@ -389,21 +424,23 @@ async function renderDocs() {
   }
   for (const key of monate) {
     const [y, m] = key.split('-').map(Number);
-    const eintraege = (proMonat.get(key) || []).sort((a, b) => a.o.sort - b.o.sort || a.d.addedAt - b.d.addedAt);
+    const eintraege = (proMonat.get(key) || []).sort((a, b) => a.sort - b.sort || a.d.addedAt - b.d.addedAt);
     const zeilen = [];
     let vorhanden = 0;
     let soll = 0;
     if (zeigeLuecken) {
-      for (const mo of wochenImMonat(key)) {
-        const dieseWoche = eintraege.filter(x => x.d.type === 'woche' && x.o.sort === mo.getTime());
-        if (mo > heute && !dieseWoche.length) continue;
+      for (const ab of wochenAbschnitte(key)) {
+        const dieseWoche = eintraege.filter(x => x.d.type === 'woche' && wTage.get(x.d.id).some(t => ab.tage.includes(t)));
+        const vergangen = ab.tage.filter(t => t <= heuteIso);
+        if (!dieseWoche.length && !vergangen.length) continue; // Woche liegt noch in der Zukunft
         soll++;
-        if (dieseWoche.length) {
-          vorhanden++;
-          dieseWoche.forEach(x => zeilen.push(docItemHtml(x.d, dieseWoche.length > 1)));
-        } else {
-          zeilen.push(`<li class="doc missing"><div class="doc-info"><div class="doc-name">KW ${kwVon(mo)} · ${kurzDatum(mo)}–${kurzDatum(plusTage(mo, 4))}</div>
-            <div class="doc-meta neg-text">Wochenzettel fehlt</div></div>
+        const abgedeckt = new Set([].concat(...dieseWoche.map(x => wTage.get(x.d.id))));
+        const fehlen = vergangen.filter(t => !abgedeckt.has(t));
+        if (dieseWoche.length && !fehlen.length) vorhanden++;
+        dieseWoche.forEach(x => zeilen.push(docItemHtml(x.d, doppelt(x.d, dieseWoche))));
+        if (fehlen.length) {
+          zeilen.push(`<li class="doc missing"><div class="doc-info"><div class="doc-name">KW ${kwVon(ab.montag)} · ${zeitraumText(fehlen)}</div>
+            <div class="doc-meta neg-text">${dieseWoche.length ? 'Zettel für diese Tage fehlt' : 'Wochenzettel fehlt'}</div></div>
             <div class="doc-actions"><button class="btn small" data-goto="add">Hinzufügen</button></div></li>`);
         }
       }
@@ -795,13 +832,15 @@ async function repariereAlteZettel() {
         continue;
       }
       if (d.type !== 'woche' || !d.data || !d.data.tage) continue;
-      const m = d.data.vom && d.data.vom.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
-      if (!m || d.data.tage.every(t => t.datum)) continue;
-      d.data.tage.forEach((t, i) => {
-        const dt = new Date(+m[3], +m[2] - 1, +m[1] + i, 12);
-        t.datum = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
-      });
-      if (!d.data.jahr) d.data.jahr = new Date(+m[3], +m[2] - 1, +m[1] + 3, 12).getFullYear();
+      if (d.data.quelle === 'hand') {
+        // Leere Tage gehören nicht zum Zettel (z.B. Teilwoche am Monatswechsel)
+        const n = d.data.tage.length;
+        d.data.tage = d.data.tage.filter(t => t.eintraege && t.eintraege.length);
+        if (d.data.tage.length !== n) await Docs.add(d);
+        continue;
+      }
+      // Daten der Tage aus "vom" (Montag der Woche) setzen, leere Tage außerhalb vom–bis entfernen
+      if (!self.WochenParser.korrigiereTage(d.data)) continue;
       if (d.data.kw) d.period = `KW ${d.data.kw}/${d.data.jahr}`;
       await Docs.add(d);
     }
