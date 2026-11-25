@@ -277,17 +277,79 @@ $('#filter-seg').addEventListener('click', e => {
   renderDocs();
 });
 
-async function renderDocs() {
-  const docs = (await Docs.all()).sort((a, b) => b.addedAt - a.addedAt);
-  const shown = docs.filter(d => filter === 'alle' || d.type === filter);
-  const list = $('#doc-list');
-  list.innerHTML = shown.map(d => `
+// Kalender-Einordnung: Montag der Woche bzw. Abrechnungsmonat eines Zettels
+function mittag(y, m, d) { return new Date(y, m, d, 12); }
+function plusTage(dt, n) { return mittag(dt.getFullYear(), dt.getMonth(), dt.getDate() + n); }
+function montagDerWoche(dt) { return plusTage(dt, 1 - (dt.getDay() || 7)); }
+function monatKey(dt) { return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}`; }
+function kwVon(dt) {
+  const t = new Date(Date.UTC(dt.getFullYear(), dt.getMonth(), dt.getDate()));
+  t.setUTCDate(t.getUTCDate() + 4 - (t.getUTCDay() || 7));
+  return Math.ceil(((t - Date.UTC(t.getUTCFullYear(), 0, 1)) / 86400000 + 1) / 7);
+}
+const kurzDatum = dt => `${String(dt.getDate()).padStart(2, '0')}.${String(dt.getMonth() + 1).padStart(2, '0')}.`;
+
+function wocheMontag(d) {
+  const w = d.data || {};
+  let m = (w.vom || '').match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
+  if (m) return montagDerWoche(mittag(+m[3], +m[2] - 1, +m[1]));
+  const t = (w.tage || []).find(x => x.datum);
+  if (t) { const [y, mo, da] = t.datum.split('-').map(Number); return montagDerWoche(mittag(y, mo - 1, da)); }
+  m = (d.period || '').match(/KW (\d+)\/(\d{4})/);
+  if (m) return plusTage(montagDerWoche(mittag(+m[2], 0, 4)), (+m[1] - 1) * 7);
+  return null;
+}
+
+// Eine Woche gehört zu dem Monat, in dem ihr Mittwoch liegt (dort sind die meisten Arbeitstage)
+function einordnen(d) {
+  if (d.type === 'woche') {
+    const mo = wocheMontag(d);
+    if (!mo) return null;
+    return { key: monatKey(plusTage(mo, 2)), sort: mo.getTime(), montag: mo };
+  }
+  if (d.type === 'lohn' && d.data && d.data.jahr && d.data.monat) {
+    const ende = mittag(d.data.jahr, d.data.monat, 0);
+    return { key: monatKey(ende), sort: ende.getTime() + 1 };
+  }
+  return null;
+}
+
+function wochenImMonat(key) {
+  const [y, m] = key.split('-').map(Number);
+  let mo = montagDerWoche(mittag(y, m - 1, 1));
+  if (plusTage(mo, 2).getMonth() !== m - 1) mo = plusTage(mo, 7);
+  const out = [];
+  while (plusTage(mo, 2).getMonth() === m - 1) { out.push(mo); mo = plusTage(mo, 7); }
+  return out;
+}
+
+function monateZwischen(von, bis) {
+  const out = [];
+  let [y, m] = von.split('-').map(Number);
+  const [y2, m2] = bis.split('-').map(Number);
+  while (y < y2 || (y === y2 && m <= m2)) {
+    out.push(`${y}-${String(m).padStart(2, '0')}`);
+    m++; if (m > 12) { m = 1; y++; }
+  }
+  return out;
+}
+
+function docItemHtml(d, dup) {
+  const ord = einordnen(d);
+  const titel = d.type === 'woche' && ord && ord.montag
+    ? `KW ${kwVon(ord.montag)} · ${kurzDatum(ord.montag)}–${kurzDatum(plusTage(ord.montag, 4))}`
+    : d.type === 'lohn' && d.period ? `Lohnzettel ${d.period}` : (d.period || d.name);
+  const statusText = isHandWoche(d) && d.status === 'neu' ? 'Noch nicht eingetragen' : (STATUS_LABEL[d.status] || esc(d.status));
+  const pruefKnopf = d.data
+    ? `<button class="chk ${d.status === 'geprueft' ? 'on' : ''}" data-act="check">${d.status === 'geprueft' ? '✓ Geprüft' : '○ Als geprüft markieren'}</button>`
+    : `<div class="doc-meta status-${d.status}">${statusText}</div>`;
+  return `
     <li class="doc" data-id="${d.id}">
       ${d.thumb ? `<img class="thumb" src="${d.thumb}" alt="">` : `<div class="thumb">${isExcelFile({ name: d.name, type: d.mime }) ? 'XLS' : 'PDF'}</div>`}
       <div class="doc-info">
-        <div class="doc-name">${esc(d.period || d.name)}</div>
-        <div class="doc-meta"><span class="badge">${TYPE_LABEL[d.type]}</span>${fmtDate(d.addedAt)} · ${fmtSize(d.size)}</div>
-        <div class="doc-meta status-${d.status}">${isHandWoche(d) && d.status === 'neu' ? 'Noch nicht eingetragen' : (STATUS_LABEL[d.status] || esc(d.status))}</div>
+        <div class="doc-name">${esc(titel)}</div>
+        <div class="doc-meta"><span class="badge">${TYPE_LABEL[d.type]}</span>${dup ? '<span class="badge warn">doppelt</span>' : ''}${fmtDate(d.addedAt)} · ${fmtSize(d.size)}</div>
+        ${pruefKnopf}
       </div>
       <div class="doc-actions">
         ${isHandWoche(d) ? `<button class="btn small primary" data-review="${d.id}">${d.data ? 'Bearbeiten' : 'Eintragen'}</button>`
@@ -295,7 +357,64 @@ async function renderDocs() {
         <button class="btn small" data-act="open">Ansehen</button>
         <button class="btn small danger" data-act="del">Löschen</button>
       </div>
-    </li>`).join('');
+    </li>`;
+}
+
+async function renderDocs() {
+  const docs = await Docs.all();
+  const shown = docs.filter(d => filter === 'alle' || d.type === filter);
+  const list = $('#doc-list');
+  const heute = mittag(new Date().getFullYear(), new Date().getMonth(), new Date().getDate());
+
+  const ohneDatum = [];
+  const proMonat = new Map();
+  for (const d of shown) {
+    const o = einordnen(d);
+    if (!o) { ohneDatum.push(d); continue; }
+    if (!proMonat.has(o.key)) proMonat.set(o.key, []);
+    proMonat.get(o.key).push({ d, o });
+  }
+
+  // Lückenlos alle Monate zwischen dem ersten und letzten Wochenzettel zeigen
+  const wochenMonate = docs.filter(d => d.type === 'woche').map(einordnen).filter(Boolean).map(o => o.key).sort();
+  const zeigeLuecken = filter !== 'lohn' && wochenMonate.length > 0;
+  let monate = Array.from(proMonat.keys());
+  if (zeigeLuecken) monate = Array.from(new Set(monate.concat(monateZwischen(wochenMonate[0], wochenMonate[wochenMonate.length - 1]))));
+  monate.sort().reverse();
+
+  let html = '';
+  if (ohneDatum.length) {
+    html += `<li class="month-head">Noch ohne Datum <span>${ohneDatum.length}</span></li>`;
+    html += ohneDatum.sort((a, b) => b.addedAt - a.addedAt).map(d => docItemHtml(d, false)).join('');
+  }
+  for (const key of monate) {
+    const [y, m] = key.split('-').map(Number);
+    const eintraege = (proMonat.get(key) || []).sort((a, b) => a.o.sort - b.o.sort || a.d.addedAt - b.d.addedAt);
+    const zeilen = [];
+    let vorhanden = 0;
+    let soll = 0;
+    if (zeigeLuecken) {
+      for (const mo of wochenImMonat(key)) {
+        const dieseWoche = eintraege.filter(x => x.d.type === 'woche' && x.o.sort === mo.getTime());
+        if (mo > heute && !dieseWoche.length) continue;
+        soll++;
+        if (dieseWoche.length) {
+          vorhanden++;
+          dieseWoche.forEach(x => zeilen.push(docItemHtml(x.d, dieseWoche.length > 1)));
+        } else {
+          zeilen.push(`<li class="doc missing"><div class="doc-info"><div class="doc-name">KW ${kwVon(mo)} · ${kurzDatum(mo)}–${kurzDatum(plusTage(mo, 4))}</div>
+            <div class="doc-meta neg-text">Wochenzettel fehlt</div></div>
+            <div class="doc-actions"><button class="btn small" data-goto="add">Hinzufügen</button></div></li>`);
+        }
+      }
+      eintraege.filter(x => x.d.type !== 'woche').forEach(x => zeilen.push(docItemHtml(x.d, false)));
+    } else {
+      eintraege.forEach(x => zeilen.push(docItemHtml(x.d, false)));
+    }
+    if (!zeilen.length) continue;
+    html += `<li class="month-head">${MONATE[m - 1]} ${y}${zeigeLuecken && soll ? ` <span>${vorhanden} von ${soll} Wochen</span>` : ''}</li>` + zeilen.join('');
+  }
+  list.innerHTML = html;
   $('#doc-empty').style.display = shown.length ? 'none' : 'block';
 }
 
@@ -304,6 +423,14 @@ $('#doc-list').addEventListener('click', async e => {
   if (!b) return;
   const id = b.closest('.doc').dataset.id;
   if (b.dataset.act === 'open') openViewer(id);
+  if (b.dataset.act === 'check') {
+    const d = await Docs.get(id);
+    if (!d || !d.data) return;
+    if (d.status === 'geprueft') { d.status = 'ausgelesen'; d.checkedAt = null; }
+    else { d.status = 'geprueft'; d.checkedAt = Date.now(); }
+    await Docs.add(d);
+    renderDocs();
+  }
   if (b.dataset.act === 'del') {
     if (b.dataset.confirm) {
       await Docs.remove(id);
@@ -403,7 +530,7 @@ function openReviewLohn(d) {
       ${groups}
       <div class="review-actions">
         <button class="btn" data-review-open="${d.id}">Zettel ansehen</button>
-        <button class="btn primary" id="review-save">Stimmt so, speichern</button>
+        <button class="btn primary" id="review-save">✓ Geprüft, speichern</button>
       </div>
     </div>`;
   if (!$('#viewer').open) $('#viewer').showModal();
@@ -468,7 +595,7 @@ async function openReview(id) {
       ${dayHtml}
       <div class="review-actions">
         <button class="btn" data-review-open="${d.id}">Zettel ansehen</button>
-        <button class="btn primary" id="review-save">Stimmt so, speichern</button>
+        <button class="btn primary" id="review-save">✓ Geprüft, speichern</button>
       </div>
     </div>`;
   if (!$('#viewer').open) $('#viewer').showModal();

@@ -180,3 +180,11 @@ html, body { overflow-x: hidden; }
 .neg-text { color: var(--danger); }
 .pos-text { color: var(--ok); }
 .entry.hand { border-top: 1px dashed var(--line); }
+
+.month-head { list-style: none; display: flex; justify-content: space-between; align-items: baseline; font-weight: 700; font-size: 16px; margin: 18px 2px 8px; }
+.month-head:first-child { margin-top: 4px; }
+.month-head span { font-weight: 400; font-size: 13px; color: var(--muted); }
+.doc.missing { border-style: dashed; background: transparent; }
+.chk { margin-top: 4px; border: 1px solid var(--line); background: var(--bg); color: var(--muted); border-radius: 99px; padding: 4px 10px; font: inherit; font-size: 13px; cursor: pointer; }
+.chk.on { border-color: var(--ok); color: var(--ok); font-weight: 600; }
+.badge.warn { background: #f6d7a7; color: #6b4300; }
