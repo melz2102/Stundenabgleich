@@ -6,11 +6,22 @@ Handy-App (Web-App/PWA) zum Abgleich von Wochenzetteln (Stundenerfassungsblatt) 
 - Alle Zettel werden nur lokal auf dem Gerät gespeichert (IndexedDB), nichts geht an einen Server.
 - Wird über GitHub Pages ausgeliefert.
 
-Stand: Wochenzettel als Excel (.xls/.xlsx, SheetJS) oder PDF (pdf.js) werden ausgelesen, handgeschriebene per Foto von Hand eingetragen, Lohnzettel (Foto oder PDF) mit Tesseract.js direkt auf dem Handy. Alle Werte lassen sich prüfen und korrigieren. Monatsauswertung mit Abgleich gegen den Lohnzettel.
+Stand: Wochenzettel als Excel (.xls/.xlsx, SheetJS) oder PDF (pdf.js) werden ausgelesen, handgeschriebene per Foto (die App liest die Zahlen als Vorschlag, man prüft und speichert), Lohnzettel (Foto oder PDF) mit Tesseract.js direkt auf dem Handy. Alle Werte lassen sich prüfen und korrigieren. Monatsauswertung mit Abgleich gegen den Lohnzettel.
 
 ## Foto-Erkennung der Lohnzettel (`extract.js`)
 
 Vor der Texterkennung wird das Foto aufbereitet: Beleuchtung ausgleichen (Grauwert geteilt durch den weichgezeichneten Hintergrund, dann Kontrast strecken), Schräglage über das Zeilenprofil schätzen und ab 1° geraderichten. Damit liest Tesseract Kevins Oktober-Foto im ersten Durchlauf vollständig (vorher 9 von 20 Werten), auch mit starkem Schatten oder als verkleinertes WhatsApp-Foto. Ein genaueres Sprachmodell (tessdata_best) brachte keine Verbesserung, war aber 60 % langsamer. `fotoPruefen` warnt bei dunklen, unscharfen oder sehr kleinen Fotos.
+
+## Handgeschriebene Wochenzettel (`hand-erkennung.js`, `ziffern-netz.js`)
+
+Beim Eintragen eines Fotos vom Stundenerfassungsblatt liest die App die Zahlen als Vorschlag (gelb markiert):
+
+1. Tinte = deutlich dunkler als das Papier ringsum (gleicht Schatten aus); schräge Fotos werden gerade gedreht.
+2. Die Linien des Formulars werden per Hough-Transformation gefunden und mit der Vorlage abgeglichen (13 Spalten, Kopfzeile + 6 Tage à 4 Zeilen, Summenzeile).
+3. Linien entfernen, die übrige Tinte je Zelle in Zeichen zerlegen. Jedes Zeichen liest ein kleines neuronales Netz (2 Faltungsschichten, ~47 000 Gewichte als int8, 63 KB), trainiert auf MNIST mit Verzerrungen, deutscher 1, 7 mit Querstrich und einer Klasse „keine Ziffer“ (Komma, Strich, zusammengeschriebene Ziffern). Läuft offline in unter einer Sekunde.
+4. Je Zelle mehrere Lesarten (eine oder zwei Ziffern, Komma ja/nein); gewählt wird die Kombination, die zur Tagesregel (Prod. + Unprod. − Soll = Mehr − Minder), zur Summenzeile und zu den Verpflegungspauschalen (14/28 €) passt. Auch die Kalenderwoche oben rechts wird gelesen.
+
+Kostenträger und Tätigkeitstext werden nicht gelesen. Das Formular hat dafür Felder für Auslöse (€) und Fahrtätigkeit (Std.) je Zeile.
 
 ## Geldbeträge und Jahresübersicht
 

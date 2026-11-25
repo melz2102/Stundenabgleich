@@ -1,5 +1,5 @@
 // Speichert die App-Dateien, damit sie auch ohne Internet startet.
-const CACHE = 'stundenabgleich-v20';
+const CACHE = 'stundenabgleich-v21';
 const FILES = [
   './',
   'index.html',
@@ -10,6 +10,8 @@ const FILES = [
   'lohn-parser.js',
   'auswertung.js',
   'manual.js',
+  'hand-erkennung.js',
+  'ziffern-netz.js',
   'export.js',
   'vendor/jspdf.umd.min.js',
   'vendor/pdf.min.mjs',

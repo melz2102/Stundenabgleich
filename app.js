@@ -234,7 +234,7 @@ async function handleFiles(fileList) {
         readMsg = `<br>Auslesen nicht möglich: ${esc(doc.readError)}`;
       }
     } else if (doc.type === 'woche') {
-      readMsg = '<br>Handgeschriebene Zettel trägst du selbst ein. Das Foto siehst du dabei, die Tage sind schon mit dem Soll vorausgefüllt.';
+      readMsg = '<br>Beim Eintragen liest die App die Zahlen vom Foto als Vorschlag. Du vergleichst sie mit dem Foto und speicherst.';
     } else if (doc.type === 'lohn') {
       const prog = document.createElement('div');
       prog.className = 'notice';
