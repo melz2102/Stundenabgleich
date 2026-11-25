@@ -165,3 +165,7 @@ html, body { overflow-x: hidden; }
 .ab-abw { background: color-mix(in srgb, var(--danger) 10%, transparent); border-radius: 8px; padding: 8px 6px; }
 .ab-abw .ab-titel, .ab-abw > span, .ab-abw .ab-hinweis { color: var(--danger); }
 .ab-ok .ab-titel { color: var(--ok); }
+
+.sheet-view { overflow: auto; padding: 8px; background: #fff; color: #111; }
+.sheet-view table { border-collapse: collapse; font-size: 12px; }
+.sheet-view td { border: 1px solid #ccc; padding: 2px 4px; white-space: pre-wrap; vertical-align: top; }

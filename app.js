@@ -142,16 +142,55 @@ $('#type-seg').addEventListener('click', e => {
   });
 });
 
+function isExcelFile(f) {
+  return /\.(xlsx?|xlsm)$/i.test(f.name || '') || /spreadsheet|ms-excel/.test(f.type || '');
+}
+
+// Excel-Stundenzettel: jedes Blatt mit einem Stundenerfassungsblatt wird ein eigener Wochenzettel
+async function handleExcel(file, out) {
+  let wochen = [];
+  let fehler = '';
+  try {
+    wochen = await self.Extract.readWochenzettelExcel(file);
+  } catch (e) {
+    fehler = e.message || String(e);
+  }
+  if (!wochen.length) {
+    out.insertAdjacentHTML('beforeend', `<div class="notice err">„${esc(file.name)}“ konnte nicht ausgelesen werden: ${esc(fehler || 'kein Stundenerfassungsblatt gefunden.')}</div>`);
+    return;
+  }
+  for (const { data, blatt } of wochen) {
+    const doc = {
+      id: uid(), type: 'woche', name: file.name, sheet: blatt,
+      mime: file.type || 'application/vnd.ms-excel', size: file.size, addedAt: Date.now(),
+      period: data.kw && data.jahr ? `KW ${data.kw}/${data.jahr}` : null,
+      thumb: null, blob: file, status: 'ausgelesen', data,
+    };
+    try {
+      await Docs.add(doc);
+      out.insertAdjacentHTML('beforeend', `<div class="notice ok">✓ Als <strong>Wochenzettel</strong> gespeichert: ${esc(doc.period || doc.name)}
+        <br>Ausgelesen aus Excel: ${data.tage.filter(t => t.eintraege.length).length} Tage, ${fmtH(data.summen.prod + data.summen.unprod)} Std., Saldo ${fmtH(data.saldo, true)}.
+        <div style="margin-top:8px"><button class="btn small primary" data-review="${doc.id}">Jetzt prüfen</button></div></div>`);
+    } catch (e) {
+      out.insertAdjacentHTML('beforeend', `<div class="notice err">„${esc(file.name)}“ konnte nicht gespeichert werden: ${esc(e.message || e)}</div>`);
+    }
+  }
+}
+
 async function handleFiles(fileList) {
   const files = Array.from(fileList || []);
   if (!files.length) return;
   const out = $('#add-result');
   out.innerHTML = '';
   for (const file of files) {
+    if (isExcelFile(file)) {
+      await handleExcel(file, out);
+      continue;
+    }
     const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
     const isImg = file.type.startsWith('image/');
     if (!isPdf && !isImg) {
-      out.insertAdjacentHTML('beforeend', `<div class="notice err">„${esc(file.name)}“ ist kein Foto und kein PDF und wurde nicht gespeichert.</div>`);
+      out.insertAdjacentHTML('beforeend', `<div class="notice err">„${esc(file.name)}“ ist kein Foto, kein PDF und keine Excel-Datei und wurde nicht gespeichert.</div>`);
       continue;
     }
     const guess = guessFromName(file.name);
@@ -238,7 +277,7 @@ async function renderDocs() {
   const list = $('#doc-list');
   list.innerHTML = shown.map(d => `
     <li class="doc" data-id="${d.id}">
-      ${d.thumb ? `<img class="thumb" src="${d.thumb}" alt="">` : `<div class="thumb">PDF</div>`}
+      ${d.thumb ? `<img class="thumb" src="${d.thumb}" alt="">` : `<div class="thumb">${isExcelFile({ name: d.name, type: d.mime }) ? 'XLS' : 'PDF'}</div>`}
       <div class="doc-info">
         <div class="doc-name">${esc(d.period || d.name)}</div>
         <div class="doc-meta"><span class="badge">${TYPE_LABEL[d.type]}</span>${fmtDate(d.addedAt)} · ${fmtSize(d.size)}</div>
@@ -280,6 +319,16 @@ async function openViewer(id) {
   if (viewerUrl) URL.revokeObjectURL(viewerUrl);
   viewerUrl = URL.createObjectURL(d.blob);
   $('#viewer-title').textContent = d.name;
+  if (isExcelFile({ name: d.name, type: d.mime })) {
+    $('#viewer-body').innerHTML = '<p class="muted center">Lade Tabelle …</p>';
+    $('#viewer').showModal();
+    try {
+      $('#viewer-body').innerHTML = `<div class="sheet-view">${await self.Extract.excelHtml(d.blob, d.sheet)}</div>`;
+    } catch (e) {
+      $('#viewer-body').innerHTML = `<p class="notice err">Tabelle kann nicht angezeigt werden: ${esc(e.message || e)}</p>`;
+    }
+    return;
+  }
   $('#viewer-body').innerHTML = d.mime === 'application/pdf'
     ? `<iframe src="${viewerUrl}" title="${esc(d.name)}"></iframe><p class="center"><a href="${viewerUrl}" target="_blank" rel="noopener">PDF in neuem Fenster öffnen</a></p>`
     : `<img src="${viewerUrl}" alt="${esc(d.name)}">`;

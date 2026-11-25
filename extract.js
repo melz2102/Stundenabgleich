@@ -148,6 +148,50 @@
     return merged;
   }
 
+  /* ---------- Excel (SheetJS) ---------- */
+  let xlsxPromise = null;
+  function loadXlsx() {
+    if (!xlsxPromise) {
+      xlsxPromise = new Promise((resolve, reject) => {
+        if (self.XLSX) return resolve(self.XLSX);
+        const s = document.createElement('script');
+        s.src = 'vendor/xlsx.full.min.js';
+        s.onload = () => resolve(self.XLSX);
+        s.onerror = () => { xlsxPromise = null; reject(new Error('Excel-Leser konnte nicht geladen werden. Bitte einmal mit Internet öffnen.')); };
+        document.head.appendChild(s);
+      });
+    }
+    return xlsxPromise;
+  }
+
+  async function openWorkbook(blob) {
+    const XLSX = await loadXlsx();
+    return { XLSX, wb: XLSX.read(new Uint8Array(await blob.arrayBuffer()), { type: 'array' }) };
+  }
+
+  // Liefert pro Tabellenblatt mit Stundenerfassungsblatt ein Ergebnis: [{ blatt, data }]
+  async function readWochenzettelExcel(blob) {
+    const { XLSX, wb } = await openWorkbook(blob);
+    const out = [];
+    let letzterFehler = null;
+    for (const name of wb.SheetNames) {
+      const rows = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, raw: true, defval: null, blankrows: true });
+      try {
+        out.push({ blatt: name, data: self.WochenParser.parseWochenzettelExcel(rows) });
+      } catch (e) {
+        letzterFehler = e;
+      }
+    }
+    if (!out.length && letzterFehler) throw letzterFehler;
+    return out;
+  }
+
+  async function excelHtml(blob, blatt) {
+    const { XLSX, wb } = await openWorkbook(blob);
+    const name = blatt && wb.Sheets[blatt] ? blatt : wb.SheetNames[0];
+    return XLSX.utils.sheet_to_html(wb.Sheets[name], { header: '', footer: '' });
+  }
+
   /* ---------- Öffentliche Funktionen ---------- */
   async function readWochenzettel(blob) {
     const items = await pdfTextItems(blob);
@@ -177,5 +221,5 @@
     return r;
   }
 
-  self.Extract = { pdfTextItems, readWochenzettel, readLohnzettel };
+  self.Extract = { pdfTextItems, readWochenzettel, readLohnzettel, readWochenzettelExcel, excelHtml };
 })();

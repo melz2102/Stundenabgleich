@@ -156,7 +156,148 @@
     };
   }
 
-  const api = { parseWochenzettel: parse };
+  /*
+   * Excel-Version desselben Formulars ("Stundenerfassung Monteure", .xls/.xlsx).
+   * Eingabe: Zeilen als Array von Arrays mit Rohwerten (Zahlen bleiben Zahlen, Datum/Uhrzeit als Excel-Seriennummer).
+   */
+  const EXCEL_HEADER = [
+    [/^mehr/i, 'mehr'], [/^mind/i, 'mind'], [/^prod/i, 'prod'], [/^un-?\s*prod|^un-/i, 'unprod'], [/^ga-?\s*rantie|^ga-/i, 'garantie'],
+    [/^er-?\s*schwer|^er-/i, 'erschwernis'], [/^aus-?\s*l|^aus-/i, 'ausloese'], [/^ver-?\s*g|fahr/i, 'fahrt'], [/^bereit/i, 'bereitschaft'],
+    [/^kosten/i, 'kostentraeger'], [/^beschreibung/i, 'beschreibung'],
+  ];
+  const DAY_ROWS = ['montag', 'dienstag', 'mittwoch', 'donnerstag', 'freitag', 'samstag'];
+
+  function excelDate(v) {
+    if (typeof v !== 'number') return null;
+    const ms = Math.round((v - 25569) * 86400000);
+    const d = new Date(ms);
+    return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 12);
+  }
+  const fmtD = d => `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.${d.getFullYear()}`;
+  const isoD = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  function excelTime(v) {
+    if (typeof v !== 'number' || v <= 0 || v >= 1) return '';
+    const min = Math.round(v * 1440);
+    return `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
+  }
+  const xnum = v => (typeof v === 'number' ? Math.round(v * 100) / 100 : num(v));
+  const xstr = v => (v == null ? '' : String(v).trim());
+
+  function parseExcel(rows) {
+    const cell = (r, c) => (rows[r] ? rows[r][c] : null);
+    const findCell = re => {
+      for (let r = 0; r < rows.length; r++) for (let c = 0; c < (rows[r] || []).length; c++) {
+        if (typeof rows[r][c] === 'string' && re.test(rows[r][c].trim())) return { r, c };
+      }
+      return null;
+    };
+    const rightValue = (pos, test = v => v !== null && v !== '' && xstr(v) !== '') => {
+      if (!pos) return null;
+      for (let c = pos.c + 1; c < (rows[pos.r] || []).length; c++) if (test(rows[pos.r][c])) return { v: rows[pos.r][c], c };
+      return null;
+    };
+
+    if (!findCell(/^Stundenerfassungsblatt/i)) throw new Error('Das sieht nicht wie ein Stundenerfassungsblatt aus.');
+
+    // Kopf
+    const vomPos = findCell(/^vom:?$/i);
+    const vomCell = rightValue(vomPos, v => typeof v === 'number');
+    const vomDate = vomCell ? excelDate(vomCell.v) : null;
+    const bisCell = vomCell ? rightValue({ r: vomPos.r, c: vomCell.c }, v => typeof v === 'number') : null;
+    const bisDate = bisCell ? excelDate(bisCell.v) : null;
+    const kwCell = rightValue(findCell(/^Kalenderwoche/i), v => typeof v === 'number');
+    const jahrCell = rightValue(findCell(/^Jahr:?$/i), v => typeof v === 'number');
+    const persCell = rightValue(findCell(/^Personalnummer/i));
+    const nameCell = rightValue(findCell(/^Name:?$/i));
+    let jahr = jahrCell ? jahrCell.v : null;
+    if (!jahr && vomDate) jahr = new Date(vomDate.getTime() + 3 * 86400000).getFullYear();
+
+    // Spalten über die Überschriften zuordnen
+    const hdr = findCell(/^Mehr/i);
+    if (!hdr) throw new Error('Die Spaltenüberschriften wurden nicht gefunden.');
+    const cols = {};
+    (rows[hdr.r] || []).forEach((v, c) => {
+      const s = xstr(v).replace(/\s+/g, ' ');
+      const hit = EXCEL_HEADER.find(([re]) => re.test(s));
+      if (hit && !(hit[1] in cols)) cols[hit[1]] = c;
+    });
+    for (let r = hdr.r; r <= hdr.r + 2; r++) (rows[r] || []).forEach((v, c) => {
+      const s = xstr(v).toLowerCase();
+      if (s === 'von') cols.von = c; else if (s === 'bis') cols.bis = c; else if (s.startsWith('pause')) cols.pause = c;
+    });
+
+    // Tagesblöcke über Spalte A
+    const starts = [];
+    for (let r = hdr.r + 1; r < rows.length; r++) {
+      const a = xstr(cell(r, 0)).toLowerCase();
+      const i = DAY_ROWS.findIndex(n => a.startsWith(n));
+      if (i >= 0 && !starts.some(s => s.i === i)) starts.push({ i, r });
+    }
+    const summePos = findCell(/^Summe$/i);
+    const endRow = summePos ? summePos.r : rows.length;
+    if (starts.length < 5) throw new Error('Die Tageszeilen wurden nicht gefunden.');
+
+    const tage = starts.map((s, k) => {
+      const to = k + 1 < starts.length ? starts[k + 1].r : endRow;
+      const eintraege = [];
+      for (let r = s.r; r < to; r++) {
+        const e = { kostentraeger: '', beschreibung: '', von: '', bis: '' };
+        NUM_COLS.forEach(c => { e[c] = cols[c] != null ? xnum(cell(r, cols[c])) : 0; });
+        e.kostentraeger = cols.kostentraeger != null ? xstr(cell(r, cols.kostentraeger)) : '';
+        e.beschreibung = cols.beschreibung != null ? xstr(cell(r, cols.beschreibung)) : '';
+        e.von = cols.von != null ? excelTime(cell(r, cols.von)) : '';
+        e.bis = cols.bis != null ? excelTime(cell(r, cols.bis)) : '';
+        const leer = NUM_COLS.every(c => c === 'pause' || !e[c]) && !e.kostentraeger && !e.beschreibung && !e.von;
+        if (leer) continue;
+        e.kategorie = kategorie(e);
+        eintraege.push(e);
+      }
+      let datum = null;
+      if (vomDate) datum = isoD(new Date(vomDate.getTime() + s.i * 86400000));
+      const isWE = s.i === 5;
+      return {
+        tag: isWE ? 'Samstag/Sonntag' : ['Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag'][s.i],
+        datum, eintraege,
+        summe: ['mehr', 'mind', 'prod', 'unprod'].reduce((o, k2) => { o[k2] = Math.round(eintraege.reduce((a, e) => a + e[k2], 0) * 100) / 100; return o; }, {}),
+        kategorien: Array.from(new Set(eintraege.map(e => e.kategorie))),
+      };
+    });
+
+    // Summenzeile, Saldo, Kreuze
+    const summen = {};
+    NUM_COLS.forEach(c => { summen[c] = summePos && cols[c] != null ? xnum(cell(summePos.r, cols[c])) : 0; });
+    let saldo = null;
+    const saldoPos = findCell(/^Saldo/i);
+    if (saldoPos) {
+      for (let c = 0; c < (rows[saldoPos.r] || []).length; c++) if (typeof rows[saldoPos.r][c] === 'number') { saldo = xnum(rows[saldoPos.r][c]); break; }
+    }
+    if (saldo == null) saldo = Math.round((summen.mehr + summen.mind) * 100) / 100;
+    const kreuz = re => {
+      const p = findCell(re);
+      if (!p) return false;
+      for (let r = p.r; r <= p.r + 1; r++) for (let c = p.c + 1; c < (rows[r] || []).length; c++) if (/^x$/i.test(xstr(cell(r, c)))) return true;
+      return false;
+    };
+
+    const r2 = v => Math.round(v * 100) / 100;
+    const warnungen = [];
+    ['mehr', 'mind', 'prod', 'unprod'].forEach(k => {
+      const t = r2(tage.reduce((a, d) => a + d.summe[k], 0));
+      if (summePos && t !== r2(summen[k])) warnungen.push(`Summe ${k}: Tage ergeben ${t}, Zettel sagt ${r2(summen[k])}`);
+    });
+
+    return {
+      art: 'woche', quelle: 'excel', jahr, kw: kwCell ? kwCell.v : null,
+      vom: vomDate ? fmtD(vomDate) : null, bis: bisDate ? fmtD(bisDate) : null,
+      personalnummer: persCell ? xstr(persCell.v) : null, name: nameCell ? xstr(nameCell.v) : null,
+      tage, summen, saldo,
+      mehrstundenVerguetet: kreuz(/^Mehrstunden vergüten/i),
+      mehrstundenGesammelt: kreuz(/^Mehrstunden sammeln/i),
+      warnungen,
+    };
+  }
+
+  const api = { parseWochenzettel: parse, parseWochenzettelExcel: parseExcel };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.WochenParser = api;
 })(typeof self !== 'undefined' ? self : this);

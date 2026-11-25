@@ -6,7 +6,7 @@ Handy-App (Web-App/PWA) zum Abgleich von Wochenzetteln (Stundenerfassungsblatt) 
 - Alle Zettel werden nur lokal auf dem Gerät gespeichert (IndexedDB), nichts geht an einen Server.
 - Wird über GitHub Pages ausgeliefert.
 
-Stand: Upload, Liste, Ansicht. Wochenzettel-PDFs werden mit pdf.js ausgelesen, Lohnzettel (Foto oder PDF) mit Tesseract.js direkt auf dem Handy. Alle Werte lassen sich prüfen und korrigieren. Die Monatsauswertung folgt.
+Stand: Upload, Liste, Ansicht. Wochenzettel als Excel (.xls/.xlsx, SheetJS) oder PDF (pdf.js) werden ausgelesen, Lohnzettel (Foto oder PDF) mit Tesseract.js direkt auf dem Handy. Alle Werte lassen sich prüfen und korrigieren. Die Monatsauswertung folgt.
 
 ## Rechenregeln der Monatsauswertung
 
