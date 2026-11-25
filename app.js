@@ -807,7 +807,12 @@ async function renderAuswertung(docs) {
     </div>
     <div class="card"><h2>Tage</h2>${tageHtml}</div>
     <div class="card"><h2>Stunden pro Baustelle</h2>${bsHtml}</div>
-    <div class="card"><h2>Abgleich mit dem Lohnzettel</h2>${abgleichHtml}</div>`;
+    <div class="card"><h2>Abgleich mit dem Lohnzettel</h2>${abgleichHtml}</div>
+    <div class="card"><h2>Monatsbericht</h2>
+      <p class="muted small">Übersicht, Abgleich und alle Tage von ${MONATE[monat - 1]} ${jahr} auf einer PDF, zum Ablegen oder fürs Lohnbüro.</p>
+      <div class="export-actions"><button class="btn primary" data-ex="pdf" data-monat="${gewaehlterMonat}">📄 Monatsbericht als PDF</button></div>
+      <div id="pdf-result"></div>
+    </div>`;
 }
 
 document.addEventListener('change', e => {
@@ -820,6 +825,7 @@ async function renderHome() {
   $('#count-woche').textContent = docs.filter(d => d.type === 'woche').length;
   $('#count-lohn').textContent = docs.filter(d => d.type === 'lohn').length;
   await renderAuswertung(docs);
+  if (self.Export) self.Export.aktualisiereInfo(docs);
   if (navigator.storage && navigator.storage.estimate) {
     const est = await navigator.storage.estimate();
     const persisted = navigator.storage.persisted ? await navigator.storage.persisted() : false;

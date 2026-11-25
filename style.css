@@ -190,3 +190,6 @@ html, body { overflow-x: hidden; }
 .badge.warn { background: #f6d7a7; color: #6b4300; }
 .rohtext { white-space: pre-wrap; font-size: 11px; max-height: 40vh; overflow: auto; background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 8px; user-select: text; -webkit-user-select: text; }
 details.small { margin: 8px 0; }
+.export-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.notice.warn-note { border-color: #d98e04; background: #fff8e6; }
+#export-result, #pdf-result { margin-top: 10px; }

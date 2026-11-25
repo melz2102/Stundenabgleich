@@ -262,7 +262,7 @@
     return res;
   }
 
-  const api = { auswerten, monateMitDaten, monatssoll, SOLL };
+  const api = { auswerten, monateMitDaten, monatssoll, sammleTage, SOLL };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Auswertung = api;
 })(typeof self !== 'undefined' ? self : this);

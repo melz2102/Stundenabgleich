@@ -256,5 +256,5 @@
     return r;
   }
 
-  self.Extract = { pdfTextItems, readWochenzettel, readLohnzettel, readWochenzettelExcel, excelHtml };
+  self.Extract = { pdfTextItems, readWochenzettel, readLohnzettel, readWochenzettelExcel, excelHtml, loadXlsx };
 })();

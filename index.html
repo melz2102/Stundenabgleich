@@ -26,10 +26,21 @@
         <div class="stat"><span class="num" id="count-woche">0</span><span class="lbl">Wochenzettel</span></div>
         <div class="stat"><span class="num" id="count-lohn">0</span><span class="lbl">Lohnzettel</span></div>
       </div>
+      <div id="backup-reminder"></div>
       <div id="auswertung"></div>
       <div class="card" id="storage-card">
-        <h2>Speicher</h2>
+        <h2>Sicherung &amp; Export</h2>
         <p class="muted" id="storage-info">Deine Zettel werden nur auf diesem Handy gespeichert.</p>
+        <p class="small" id="backup-info"></p>
+        <div class="export-actions">
+          <button class="btn primary" data-ex="sicherung">💾 Sicherung erstellen</button>
+          <label class="btn">
+            <input type="file" accept=".json,application/json" id="in-backup" hidden>
+            Sicherung einlesen
+          </label>
+          <button class="btn" data-ex="excel">📊 Alle Stunden als Excel</button>
+        </div>
+        <div id="export-result"></div>
       </div>
     </section>
 
@@ -88,5 +99,6 @@
   <script src="auswertung.js"></script>
   <script src="app.js"></script>
   <script src="manual.js"></script>
+  <script src="export.js"></script>
 </body>
 </html>
