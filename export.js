@@ -177,6 +177,8 @@
     const L = 15, R = 195, UNTEN = 280;
     let y = 18;
 
+    // Größere, dunklere Schrift: der Bericht wird meist auf dem Handy gelesen
+    const BLAU = [31, 78, 121], ROT = [176, 0, 32], GRUEN = [20, 110, 50], GRAU = [60, 60, 60];
     const schrift = (gr, fett, farbe) => {
       pdf.setFontSize(gr);
       pdf.setFont('helvetica', fett ? 'bold' : 'normal');
@@ -184,7 +186,7 @@
     };
     const platz = h => { if (y + h > UNTEN) { pdf.addPage(); y = 18; return true; } return false; };
     const linie = (farbe = 200) => { pdf.setDrawColor(farbe); pdf.line(L, y, R, y); };
-    const absatz = (s, gr = 9, farbe, breite = R - L, x = L) => {
+    const absatz = (s, gr = 10, farbe, breite = R - L, x = L) => {
       schrift(gr, false, farbe);
       const zeilen = pdf.splitTextToSize(pdfText(s), breite);
       const h = zeilen.length * gr * 0.42;
@@ -193,43 +195,52 @@
       y += h + 1;
     };
     const ueberschrift = s => {
-      platz(14);
-      y += 6;
-      schrift(12, true, [31, 78, 121]);
+      platz(18);
+      y += 8;
+      schrift(13.5, true, BLAU);
       pdf.text(pdfText(s), L, y);
-      y += 2;
-      linie(180);
-      y += 4;
+      y += 2.2;
+      linie(170);
+      y += 4.5;
     };
     // Tabellenzeile: spalten = [{ x, w, text, align }]
     const zeile = (spalten, opt = {}) => {
-      schrift(opt.gr || 9, opt.fett, opt.farbe);
+      const gr = opt.gr || 10;
+      schrift(gr, opt.fett, opt.farbe);
       const teile = spalten.map(s => pdf.splitTextToSize(pdfText(s.text), s.w));
       const n = Math.max(...teile.map(t => t.length));
-      const h = n * (opt.gr || 9) * 0.42 + 1.6;
-      if (platz(h) && opt.kopf) opt.kopf();
-      if (opt.hinterlegt) { pdf.setFillColor(...opt.hinterlegt); pdf.rect(L, y - 1, R - L, h, 'F'); }
+      const h = n * gr * 0.42 + 2;
+      if (platz(h) && opt.kopf) { opt.kopf(); schrift(gr, opt.fett, opt.farbe); }
+      if (opt.hinterlegt) { pdf.setFillColor(...opt.hinterlegt); pdf.rect(L, y - 1.2, (opt.bis || R) - L, h, 'F'); }
       spalten.forEach((s, i) => {
         const x = s.align === 'right' ? s.x + s.w : s.x;
-        pdf.text(teile[i], x, y + (opt.gr || 9) * 0.32 + 0.3, { align: s.align || 'left' });
+        pdf.text(teile[i], x, y + gr * 0.32 + 0.3, { align: s.align || 'left' });
       });
       y += h;
     };
-    const kv = (links, rechts, opt) => zeile([{ x: L, w: 120, text: links }, { x: 135, w: 60, text: rechts, align: 'right' }], opt);
+    // Bezeichnung und Wert dicht beieinander, damit man beim Heranzoomen beides sieht
+    const KV_BIS = 150;
+    let kvStreifen = false;
+    const kv = (links, rechts, opt = {}) => {
+      kvStreifen = !kvStreifen;
+      zeile([{ x: L + 1.5, w: 95, text: links }, { x: 112, w: KV_BIS - 113.5, text: rechts, align: 'right' }],
+        { gr: 10.5, bis: KV_BIS, hinterlegt: kvStreifen ? [240, 244, 249] : null, ...opt });
+    };
+    const kvNeu = () => { kvStreifen = false; };
 
     // Kopf
-    schrift(18, true, [31, 78, 121]);
+    schrift(20, true, BLAU);
     pdf.text(pdfText(`Monatsbericht ${titel}`), L, y);
-    y += 7;
+    y += 8;
     const person = personAusZetteln(docs, jahr, monat);
     if (person && (person.name || person.nr)) {
-      schrift(10, false);
+      schrift(11.5, false);
       pdf.text(pdfText([person.name, person.nr ? `Personalnummer ${person.nr}` : ''].filter(Boolean).join(' · ')), L, y);
-      y += 5;
+      y += 6;
     }
-    schrift(8, false, [110, 110, 110]);
-    pdf.text(pdfText(`Erstellt am ${deDatum(new Date())} mit der App Stundenabgleich aus den gespeicherten Wochen- und Lohnzetteln.`), L, y);
-    y += 6;
+    y -= 2;
+    absatz(`Erstellt am ${deDatum(new Date())} mit der App Stundenabgleich aus den gespeicherten Wochen- und Lohnzetteln.`, 9.5, GRAU);
+    y += 2;
 
     // Hinweise
     const hinweise = [];
@@ -237,7 +248,7 @@
     if (r.ungeprueft) hinweise.push(`${r.ungeprueft} Wochenzettel noch nicht geprüft.`);
     if (r.lohn && !r.lohnGeprueft) hinweise.push('Der Lohnzettel ist noch nicht geprüft.');
     if (r.lohnLuecke) hinweise.push(`Der Lohnzettel ist nicht vollständig ausgelesen (laut Kopf ${zahl(r.lohnLuecke.bezahlt)} bezahlte Std., erkannt ${zahl(r.lohnLuecke.erkannt)}).`);
-    hinweise.forEach(h => absatz('Hinweis: ' + h, 9, [176, 0, 32]));
+    hinweise.forEach(h => absatz('Hinweis: ' + h, 10.5, ROT));
 
     // Stunden
     ueberschrift('Stunden laut Wochenzetteln');
@@ -254,37 +265,40 @@
     if (r.ausloese) kv('Auslöse / Verpflegung', `${z(r.ausloese)} EUR`);
 
     ueberschrift('Tage');
+    kvNeu();
     Object.entries(r.tage).filter(([, n]) => n).forEach(([k, n]) => kv(ART[k] || k, String(n)));
 
     if (r.baustellen.length) {
       ueberschrift('Stunden pro Baustelle');
+      kvNeu();
       r.baustellen.forEach(b => kv(`${b.name || 'ohne Name'}${b.kostentraeger ? ` (${b.kostentraeger})` : ''}`, `${z(b.stunden)} Std. (${b.tage} T.)`));
     }
 
     // Abgleich
     ueberschrift('Abgleich mit dem Lohnzettel');
     if (!r.lohn) {
-      absatz(`Für ${titel} ist noch kein Lohnzettel gespeichert.`, 9, [110, 110, 110]);
+      absatz(`Für ${titel} ist noch kein Lohnzettel gespeichert.`, 10.5, GRAU);
     } else {
       const abw = r.abgleich.filter(a => a.status === 'abw').length;
       absatz(abw ? `${abw} Abweichung(en) zwischen Wochenzetteln und Lohnzettel.` : r.vollstaendig ? 'Keine Abweichungen gefunden.' : 'Bisher keine Abweichungen (Monat noch nicht vollständig erfasst).',
-        10, abw ? [176, 0, 32] : [20, 110, 50]);
+        11, abw ? ROT : GRUEN);
+      y += 1;
       const kopf = () => zeile([
-        { x: L, w: 88, text: 'Punkt' }, { x: 105, w: 28, text: 'Wochenzettel', align: 'right' },
-        { x: 135, w: 28, text: 'Lohnzettel', align: 'right' }, { x: 167, w: 28, text: 'Ergebnis' },
-      ], { fett: true, gr: 8, farbe: [90, 90, 90] });
+        { x: L, w: 84, text: 'Punkt' }, { x: 100, w: 30, text: 'Wochenzettel', align: 'right' },
+        { x: 133, w: 30, text: 'Lohnzettel', align: 'right' }, { x: 168, w: 27, text: 'Ergebnis' },
+      ], { fett: true, gr: 9.5, farbe: GRAU });
       kopf();
       r.abgleich.forEach(a => {
-        const farbe = a.status === 'abw' ? [176, 0, 32] : a.status === 'ok' ? [20, 110, 50] : [90, 90, 90];
-        platz(10);
-        linie(225);
-        y += 1.2;
+        const farbe = a.status === 'abw' ? ROT : a.status === 'ok' ? GRUEN : GRAU;
+        platz(12);
+        linie(200);
+        y += 1.6;
         zeile([
-          { x: L, w: 88, text: a.titel }, { x: 105, w: 28, text: z(a.zettel), align: 'right' },
-          { x: 135, w: 28, text: z(a.lohn), align: 'right' },
-          { x: 167, w: 28, text: a.status === 'ok' ? 'passt' : a.status === 'abw' ? 'Abweichung' : 'Info' },
-        ], { farbe, kopf });
-        if (a.hinweis) absatz(a.hinweis, 8, [100, 100, 100], R - L - 4, L + 2);
+          { x: L, w: 84, text: a.titel }, { x: 100, w: 30, text: z(a.zettel), align: 'right' },
+          { x: 133, w: 30, text: z(a.lohn), align: 'right' },
+          { x: 168, w: 27, text: a.status === 'ok' ? 'passt' : a.status === 'abw' ? 'Abweichung' : 'Info' },
+        ], { gr: 10.5, fett: a.status === 'abw', farbe, kopf });
+        if (a.hinweis) { absatz(a.hinweis, 9.5, GRAU, R - L - 3, L + 3); y += 0.6; }
       });
     }
 
@@ -294,11 +308,19 @@
     const key = `${jahr}-${zwei(monat)}`;
     const alle = self.Auswertung.sammleTage(docs);
     const fehlend = new Set(r.fehlendeTage);
-    const kopfTage = () => zeile([
-      { x: L, w: 20, text: 'Datum' }, { x: 36, w: 24, text: 'Art' }, { x: 61, w: 72, text: 'Baustelle / Beschreibung' },
-      { x: 134, w: 13, text: 'Std.', align: 'right' }, { x: 148, w: 15, text: 'Mehr/Mind.', align: 'right' },
-      { x: 164, w: 15, text: 'Auslöse', align: 'right' }, { x: 180, w: 15, text: 'Fahrt', align: 'right' },
-    ], { fett: true, gr: 8, farbe: [90, 90, 90] });
+    // Spalten: Datum | Art | Baustelle | Std. | Mehr/Mind. | Auslöse | Fahrt
+    const SP = [
+      { x: L, w: 19 }, { x: 35, w: 25 }, { x: 61, w: 64 },
+      { x: 126, w: 14, align: 'right' }, { x: 142, w: 17, align: 'right' },
+      { x: 161, w: 16, align: 'right' }, { x: 179, w: 16, align: 'right' },
+    ];
+    const spalten = texte => texte.map((text, i) => ({ ...SP[i], text }));
+    const kopfTage = () => {
+      zeile(spalten(['Datum', 'Art', 'Baustelle / Beschreibung', 'Std.', 'Mehr/ Mind.', 'Auslöse EUR', 'Fahrt Std.']),
+        { fett: true, gr: 9, farbe: GRAU });
+      linie(170);
+      y += 1.4;
+    };
     kopfTage();
     const letzter = new Date(jahr, monat, 0, 12).getDate();
     let gestreift = false;
@@ -312,16 +334,14 @@
         t.eintraege.forEach((e, i) => {
           const desc = [e.kostentraeger, e.beschreibung].filter(Boolean).join(' · ');
           const mm = (e.mehr || 0) + (e.mind || 0);
-          zeile([
-            { x: L, w: 20, text: i === 0 ? datum : '' }, { x: 36, w: 24, text: ART[e.kategorie] || e.kategorie || '' },
-            { x: 61, w: 72, text: desc }, { x: 134, w: 13, text: z((e.prod || 0) + (e.unprod || 0)), align: 'right' },
-            { x: 148, w: 15, text: mm ? z(mm, true) : '', align: 'right' },
-            { x: 164, w: 15, text: e.ausloese ? z(e.ausloese) : '', align: 'right' },
-            { x: 180, w: 15, text: e.fahrt ? z(e.fahrt) : '', align: 'right' },
-          ], { gr: 8, kopf: kopfTage, hinterlegt: gestreift ? [243, 246, 250] : null });
+          zeile(spalten([
+            i === 0 ? datum : '', ART[e.kategorie] || e.kategorie || '', desc,
+            z((e.prod || 0) + (e.unprod || 0)), mm ? z(mm, true) : '',
+            e.ausloese ? z(e.ausloese) : '', e.fahrt ? z(e.fahrt) : '',
+          ]), { gr: 9.5, kopf: kopfTage, hinterlegt: gestreift ? [238, 243, 249] : null });
         });
       } else if (fehlend.has(iso)) {
-        zeile([{ x: L, w: 20, text: datum }, { x: 36, w: 150, text: 'Kein Wochenzettel erfasst' }], { gr: 8, farbe: [176, 0, 32], kopf: kopfTage });
+        zeile([{ ...SP[0], text: datum }, { x: SP[1].x, w: R - SP[1].x, text: 'Kein Wochenzettel erfasst' }], { gr: 9.5, farbe: ROT, kopf: kopfTage });
       }
     }
 
@@ -329,7 +349,7 @@
     const seiten = pdf.getNumberOfPages();
     for (let i = 1; i <= seiten; i++) {
       pdf.setPage(i);
-      schrift(8, false, [130, 130, 130]);
+      schrift(8.5, false, [100, 100, 100]);
       pdf.text(pdfText(`Stundenabgleich · Monatsbericht ${titel}`), L, 290);
       pdf.text(`Seite ${i} von ${seiten}`, R, 290, { align: 'right' });
     }
