@@ -699,7 +699,9 @@ async function renderAuswertung(docs) {
   } else {
     const abw = r.abgleich.filter(a => a.status === 'abw').length;
     abgleichHtml = `
-      <div class="notice ${abw ? 'err' : 'ok'}">${abw ? `<strong>${abw} Abweichung(en)</strong> zwischen Wochenzetteln und Lohnzettel.` : 'Keine Abweichungen gefunden.'}</div>
+      <div class="notice ${abw ? 'err' : r.vollstaendig ? 'ok' : ''}">${abw ? `<strong>${abw} Abweichung(en)</strong> zwischen Wochenzetteln und Lohnzettel.`
+        : r.vollstaendig ? 'Keine Abweichungen gefunden.'
+        : 'Bisher keine Abweichungen. Stundenlohn, Urlaub, Krank und Arbeitszeitkonto kann ich erst vergleichen, wenn alle Wochenzettel des Monats da sind.'}</div>
       <div class="abgleich">
         <div class="ab-head"><span></span><span>Wochenzettel</span><span>Lohnzettel</span></div>
         ${r.abgleich.map(a => `
