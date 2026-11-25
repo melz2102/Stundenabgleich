@@ -63,10 +63,13 @@
 
     if (!find(/Stundenerfassungsblatt/)) throw new Error('Das sieht nicht wie ein Stundenerfassungsblatt aus.');
 
-    const jahr = parseInt(rightOf(/^Jahr:$/), 10) || null;
+    let jahr = parseInt(rightOf(/^Jahr:$/), 10) || null;
     const kw = parseInt(rightOf(/^Kalenderwoche:$/), 10) || null;
     const vom = rightOf(/^vom:$/);
     const bis = rightOf(/^bis:$/, 60);
+    // Jahr nicht eingetragen? Dann aus "vom:" (Jahr des Donnerstags = Jahr der Kalenderwoche)
+    const vomM = vom && vom.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
+    if (!jahr && vomM) jahr = new Date(+vomM[3], +vomM[2] - 1, +vomM[1] + 3, 12).getFullYear();
     const personalnummer = rightOf(/^Personalnummer:$/);
     const name = rightOf(/^Name:$/);
 
@@ -82,7 +85,12 @@
       const inDay = tableItems.filter(i => i.y >= lbl.y - 3 && i.y < yEnd);
       const datumItem = inDay.find(i => i.x < 80 && /^\d{1,2}\.\d{1,2}\./.test(i.str));
       let datum = null;
-      if (datumItem && jahr) {
+      // Bevorzugt aus "vom:" (Montag) berechnen – klappt auch, wenn das Jahr fehlt oder die Woche über Silvester geht
+      const vm = vom && vom.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
+      if (vm) {
+        const dt = new Date(+vm[3], +vm[2] - 1, +vm[1] + idx, 12);
+        datum = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+      } else if (datumItem && jahr) {
         const [d, m] = datumItem.str.split('.').map(Number);
         datum = `${jahr}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
       }

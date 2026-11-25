@@ -571,5 +571,26 @@ async function renderHome() {
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     navigator.serviceWorker.register('sw.js').catch(() => {});
   }
+  await repariereAlteZettel();
   renderHome();
 })();
+
+// Ältere Version hat bei Wochenzetteln ohne eingetragenes Jahr kein Datum gesetzt.
+// Datum aus "vom:" nachtragen, ohne geprüfte Korrekturen zu verändern.
+async function repariereAlteZettel() {
+  try {
+    const docs = await Docs.all();
+    for (const d of docs) {
+      if (d.type !== 'woche' || !d.data || !d.data.tage) continue;
+      const m = d.data.vom && d.data.vom.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
+      if (!m || d.data.tage.every(t => t.datum)) continue;
+      d.data.tage.forEach((t, i) => {
+        const dt = new Date(+m[3], +m[2] - 1, +m[1] + i, 12);
+        t.datum = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+      });
+      if (!d.data.jahr) d.data.jahr = new Date(+m[3], +m[2] - 1, +m[1] + 3, 12).getFullYear();
+      if (d.data.kw) d.period = `KW ${d.data.kw}/${d.data.jahr}`;
+      await Docs.add(d);
+    }
+  } catch (e) { /* nicht kritisch */ }
+}
