@@ -240,7 +240,7 @@ button.jt-row:active { background: var(--bg); }
 
 /* Prüfen/Eintragen: Kopf und Inhalt als Spalte (der Inhalt endet nicht mehr unter dem Bildschirmrand,
    auch nicht bei iPhones mit Notch), Speichern-Leiste bleibt unten sichtbar */
-dialog#viewer { height: 100vh; height: 100dvh; max-height: 100dvh; }
+dialog#viewer { height: 100vh; height: 100dvh; height: var(--app-h, 100dvh); max-height: none; }
 dialog#viewer[open] { display: flex; flex-direction: column; }
 dialog#viewer .viewer-head { flex: none; }
 #viewer-body { flex: 1 1 auto; min-height: 0; height: auto; }
@@ -250,3 +250,7 @@ dialog#viewer .viewer-head { flex: none; }
   background: var(--bg); border-top: 1px solid var(--line);
 }
 .review .review-actions .btn.primary { flex: 1 1 auto; }
+
+.viewer-btns { display: flex; gap: 8px; flex: none; }
+.viewer-head strong { min-width: 0; }
+[hidden] { display: none !important; }

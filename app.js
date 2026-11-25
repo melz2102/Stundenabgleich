@@ -518,6 +518,23 @@ async function openViewer(id) {
 
 $('#viewer-close').addEventListener('click', () => $('#viewer').close());
 
+// Speichern-Knopf zusätzlich oben im Kopf, damit er auf dem Handy ohne Scrollen erreichbar ist.
+// Er löst denselben Knopf unten aus (Prüfen: "Geprüft, speichern", Eintragen: "Speichern").
+function kopfSpeichern() {
+  const unten = $('#review-save') || $('#hand-save');
+  const k = $('#viewer-save');
+  k.hidden = !unten;
+  if (unten) k.textContent = unten.id === 'hand-save' ? '✓ Speichern' : '✓ Geprüft';
+}
+new MutationObserver(kopfSpeichern).observe($('#viewer-body'), { childList: true });
+$('#viewer-save').addEventListener('click', () => { const unten = $('#review-save') || $('#hand-save'); if (unten) unten.click(); });
+
+// Höhe des Fensters aus der tatsächlichen Bildschirmhöhe (100vh ist auf dem iPhone oft zu hoch)
+function hoeheSetzen() { document.documentElement.style.setProperty('--app-h', `${window.innerHeight}px`); }
+hoeheSetzen();
+window.addEventListener('resize', hoeheSetzen);
+window.addEventListener('orientationchange', () => setTimeout(hoeheSetzen, 300));
+
 /* ---------- Prüfen und Korrigieren ---------- */
 const KAT_LABEL = {
   baustelle: 'Baustelle', arbeit: 'Arbeit (ohne Baustelle)', lehrgang: 'Lehrgang', krank: 'Krank', urlaub: 'Urlaub',
@@ -1006,6 +1023,7 @@ document.addEventListener('change', e => {
 });
 
 /* ---------- Übersicht ---------- */
+const APP_VERSION = '23';
 async function renderHome() {
   const docs = await Docs.all();
   $('#count-woche').textContent = docs.filter(d => d.type === 'woche').length;
@@ -1017,7 +1035,8 @@ async function renderHome() {
     const persisted = navigator.storage.persisted ? await navigator.storage.persisted() : false;
     $('#storage-info').textContent =
       `Deine Zettel werden nur auf diesem Handy gespeichert (${fmtSize(est.usage || 0)} belegt). ` +
-      (persisted ? 'Dauerhafte Speicherung ist aktiv.' : 'Tipp: App zum Startbildschirm hinzufügen, damit nichts automatisch gelöscht wird.');
+      (persisted ? 'Dauerhafte Speicherung ist aktiv.' : 'Tipp: App zum Startbildschirm hinzufügen, damit nichts automatisch gelöscht wird.') +
+      ` App-Version ${APP_VERSION}.`;
   }
 }
 
@@ -1027,7 +1046,17 @@ async function renderHome() {
     try { await navigator.storage.persist(); } catch (e) { /* egal */ }
   }
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
-    navigator.serviceWorker.register('sw.js').catch(() => {});
+    const hatteSW = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.register('sw.js').then(reg => {
+      document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') reg.update().catch(() => {}); });
+    }).catch(() => {});
+    let neuLaden = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!hatteSW || neuLaden) return;
+      neuLaden = true;
+      if (!$('#viewer').open) location.reload();
+      else $('#viewer').addEventListener('close', () => location.reload(), { once: true });
+    });
   }
   await repariereAlteZettel();
   renderHome();
