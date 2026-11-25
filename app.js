@@ -180,6 +180,28 @@ async function handleFiles(fileList) {
         doc.readError = e.message || String(e);
         readMsg = `<br>Auslesen nicht möglich: ${esc(doc.readError)}`;
       }
+    } else if (doc.type === 'woche') {
+      readMsg = '<br>Fotos von Wochenzetteln werden noch nicht ausgelesen. Am besten das PDF verwenden.';
+    } else if (doc.type === 'lohn') {
+      const prog = document.createElement('div');
+      prog.className = 'notice';
+      prog.textContent = `Lese Lohnzettel „${doc.name}“ … das kann bis zu einer Minute dauern.`;
+      out.appendChild(prog);
+      try {
+        const data = await self.Extract.readLohnzettel(file, pct => {
+          prog.textContent = `Lese Lohnzettel … ${pct} %`;
+        });
+        doc.data = data;
+        if (data.monat && data.jahr) doc.period = `${MONATE[data.monat - 1]} ${data.jahr}`;
+        doc.status = 'ausgelesen';
+        readMsg = `<br>Ausgelesen: ${fmtH(data.bezahltStd)} bezahlte Std., Arbeitszeitkonto ${fmtH(data.azkStand, true)}, Resturlaub ${fmtH(data.urlaubRest)} Tage.`
+          + (data.warnungen.length ? ` <strong>${data.warnungen.length} Hinweis(e), bitte prüfen.</strong>` : '');
+      } catch (e) {
+        doc.status = 'fehler';
+        doc.readError = e.message || String(e);
+        readMsg = `<br>Auslesen nicht möglich: ${esc(doc.readError)}`;
+      }
+      prog.remove();
     }
     try {
       await Docs.add(doc);
@@ -223,7 +245,7 @@ async function renderDocs() {
         <div class="doc-meta status-${d.status}">${STATUS_LABEL[d.status] || esc(d.status)}</div>
       </div>
       <div class="doc-actions">
-        ${d.data ? `<button class="btn small primary" data-review="${d.id}">Prüfen</button>` : ''}
+        ${d.data || d.type === 'lohn' ? `<button class="btn small primary" data-review="${d.id}">Prüfen</button>` : ''}
         <button class="btn small" data-act="open">Ansehen</button>
         <button class="btn small danger" data-act="del">Löschen</button>
       </div>
@@ -280,12 +302,85 @@ function numIn(v) {
 }
 
 function inVal(v) {
-  return v ? String(v).replace('.', ',') : '';
+  return v || v === 0 ? String(v).replace('.', ',') : '';
+}
+
+const LOHN_FELDER = [
+  ['Stunden', [
+    ['stundenlohn', 'Stundenlohn (Lohnart 1000), Std.'],
+    ['fahrgeldStd', 'Fahrgeld, Std.'],
+    ['zeitlohnStd', 'Zeitlohn Std. (Kopf)'],
+    ['ueberstd', 'Überstunden (Kopf)'],
+    ['azkAbbau', 'Abbau Arbeitszeitkonto, Std.'],
+    ['azkAufbau', 'Aufbau Arbeitszeitkonto, Std.'],
+    ['bezahltStd', 'Bezahlte Std. (Kopf)'],
+  ]],
+  ['Arbeitszeitkonto', [
+    ['azkStand', 'AZK-Stand (Hinweise), Std.'],
+  ]],
+  ['Urlaub', [
+    ['urlaubAnspruch', 'Urlaubsanspruch, Tage'],
+    ['urlaubGenommen', 'Urlaub genommen, Tage'],
+    ['urlaubRest', 'Resturlaub, Tage'],
+  ]],
+];
+
+function openReviewLohn(d) {
+  const r = d.data;
+  const monate = MONATE.map((m, i) => `<option value="${i + 1}"${r.monat === i + 1 ? ' selected' : ''}>${m}</option>`).join('');
+  const groups = LOHN_FELDER.map(([titel, felder]) => `
+    <div class="day"><div class="day-head"><strong>${titel}</strong></div>
+      ${felder.map(([k, l]) => `<label class="field">${l}<input inputmode="decimal" data-lf="${k}" value="${r[k] == null ? '' : inVal(r[k])}"></label>`).join('')}
+    </div>`).join('');
+  $('#viewer-title').textContent = 'Prüfen: ' + (d.period || d.name);
+  $('#viewer-body').innerHTML = `
+    <div class="review">
+      ${r.warnungen && r.warnungen.length ? `<div class="notice err">${r.warnungen.map(esc).join('<br>')}</div>` : ''}
+      ${d.readError ? `<div class="notice err">Automatisches Auslesen hat nicht geklappt: ${esc(d.readError)}<br>Du kannst die Werte hier von Hand eintragen.</div>` : ''}
+      <p class="muted small">Vergleiche die Werte mit deinem Lohnzettel. Leere Felder kommen auf dem Zettel nicht vor. ${r.quelle === 'foto' ? 'Bei Fotos verliest sich die Erkennung manchmal, also bitte genau hinschauen.' : ''}</p>
+      <div class="day"><div class="day-head"><strong>Abrechnungsmonat</strong></div>
+        <div class="entry-grid two">
+          <label class="field">Monat<select data-lf="monat"><option value="">–</option>${monate}</select></label>
+          <label class="field">Jahr<input inputmode="numeric" data-lf="jahr" value="${r.jahr || ''}"></label>
+        </div>
+      </div>
+      ${groups}
+      <div class="review-actions">
+        <button class="btn" data-review-open="${d.id}">Zettel ansehen</button>
+        <button class="btn primary" id="review-save">Stimmt so, speichern</button>
+      </div>
+    </div>`;
+  if (!$('#viewer').open) $('#viewer').showModal();
+}
+
+async function saveReviewLohn(d) {
+  const r = d.data || self.LohnParser.parseLohnzettel('');
+  $$('#viewer-body [data-lf]').forEach(el => {
+    const v = el.value.trim();
+    const k = el.dataset.lf;
+    if (k === 'monat' || k === 'jahr') r[k] = v ? parseInt(v, 10) : null;
+    else r[k] = v === '' ? null : numIn(v);
+  });
+  r.warnungen = [];
+  d.data = r;
+  if (r.monat && r.jahr) d.period = `${MONATE[r.monat - 1]} ${r.jahr}`;
+  d.readError = null;
+  d.status = 'geprueft';
+  d.checkedAt = Date.now();
+  await Docs.add(d);
+  $('#viewer').close();
+  renderDocs();
 }
 
 async function openReview(id) {
   const d = await Docs.get(id);
-  if (!d || !d.data) return;
+  if (!d) return;
+  if (d.type === 'lohn') {
+    if (!d.data) d.data = self.LohnParser.parseLohnzettel('');
+    reviewId = id;
+    return openReviewLohn(d);
+  }
+  if (!d.data) return;
   reviewId = id;
   const w = d.data;
   const dayHtml = w.tage.map((t, ti) => {
@@ -325,6 +420,7 @@ async function openReview(id) {
 async function saveReview() {
   const d = await Docs.get(reviewId);
   if (!d) return;
+  if (d.type === 'lohn') return saveReviewLohn(d);
   const w = d.data;
   $$('#viewer-body .entry').forEach(el => {
     const e = w.tage[+el.dataset.t].eintraege[+el.dataset.e];
