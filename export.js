@@ -178,7 +178,8 @@
     let y = 18;
 
     // Größere, dunklere Schrift: der Bericht wird meist auf dem Handy gelesen
-    const BLAU = [31, 78, 121], ROT = [176, 0, 32], GRUEN = [20, 110, 50], GRAU = [60, 60, 60];
+    const BLAU = [31, 78, 121], ROT = [176, 0, 32], GRUEN = [20, 110, 50], GRAU = [60, 60, 60], ORANGE = [163, 95, 0];
+    const eur = v => (v == null ? '' : self.Auswertung.eur(v));
     const schrift = (gr, fett, farbe) => {
       pdf.setFontSize(gr);
       pdf.setFont('helvetica', fett ? 'bold' : 'normal');
@@ -302,6 +303,44 @@
       });
     }
 
+    // Geldbeträge
+    if (r.lohn && r.geld.length) {
+      ueberschrift('Geldbeträge laut Lohnzettel');
+      const ss = r.stundensatz;
+      if (ss && ss.jetzt != null) {
+        kvNeu();
+        kv('Stundensatz', eur(ss.jetzt), { fett: true });
+        y += 1;
+        absatz(ss.geaendert ? `Neuer Stundensatz: vorher ${eur(ss.vorher)} (${ss.vorherMonat}), jetzt ${eur(ss.jetzt)}.`
+          : ss.vorher != null ? `Gleich wie im ${ss.vorherMonat}.` : 'Kein früherer Lohnzettel zum Vergleich.', 10, ss.geaendert ? ORANGE : GRAU);
+        y += 1;
+      }
+      const kopfG = () => zeile([
+        { x: L, w: 84, text: 'Lohnart' }, { x: 100, w: 30, text: 'Std. × Satz', align: 'right' },
+        { x: 133, w: 30, text: 'Lohnzettel', align: 'right' }, { x: 168, w: 27, text: 'Ergebnis' },
+      ], { fett: true, gr: 9.5, farbe: GRAU });
+      kopfG();
+      const FARBE = { ok: GRUEN, abw: ROT, warn: ORANGE, info: GRAU };
+      const TEXT = { ok: 'passt', abw: 'Abweichung', warn: 'Hinweis', info: '' };
+      r.geld.forEach(g => {
+        platz(12);
+        linie(200);
+        y += 1.6;
+        zeile([
+          { x: L, w: 84, text: g.titel }, { x: 100, w: 30, text: eur(g.erwartet), align: 'right' },
+          { x: 133, w: 30, text: eur(g.betrag) || '-', align: 'right' }, { x: 168, w: 27, text: TEXT[g.status] },
+        ], { gr: 10.5, fett: g.status === 'abw', farbe: FARBE[g.status], kopf: kopfG });
+        if (g.hinweis) { absatz(g.hinweis, 9.5, GRAU, R - L - 3, L + 3); y += 0.6; }
+      });
+      if (r.geldSumme) {
+        platz(12);
+        linie(150);
+        y += 1.6;
+        zeile([{ x: L, w: 84, text: 'Summe' }, { x: 133, w: 30, text: eur(r.geldSumme.summe), align: 'right' }], { gr: 10.5, fett: true });
+        absatz(`Sollte dem "Gesamt-Brutto" auf dem Lohnzettel entsprechen.${r.geldSumme.fehlt ? ` ${r.geldSumme.fehlt} Betrag/Beträge nicht erkannt.` : ''}`, 9.5, GRAU, R - L - 3, L + 3);
+      }
+    }
+
     // Tage im Einzelnen
     platz(40); // Überschrift nicht allein unten auf der Seite
     ueberschrift('Tage im Einzelnen');
@@ -402,11 +441,18 @@
       }
 
       // Blatt 3: Lohnzettel
-      const felder = [].concat(...LOHN_FELDER.map(([, f]) => f));
+      const felder = [].concat(...LOHN_FELDER.map(([, f]) => f), [['stundensatz', 'Stundensatz, €']]);
       const t3 = [['Monat', 'Status'].concat(felder.map(([, l]) => l))];
       docs.filter(d => d.type === 'lohn' && d.data)
         .sort((a, b) => ((a.data.jahr || 0) * 100 + (a.data.monat || 0)) - ((b.data.jahr || 0) * 100 + (b.data.monat || 0)))
         .forEach(d => t3.push([d.period || d.name, d.status === 'geprueft' ? 'geprüft' : 'nicht geprüft'].concat(felder.map(([k]) => d.data[k] ?? null))));
+
+      // Blatt 4: Geldbeträge je Lohnart
+      const t4 = [['Monat', 'Lohnart', 'Bezeichnung', 'Std.', 'Satz, €', 'Betrag, €', 'Std. × Satz, €']];
+      docs.filter(d => d.type === 'lohn' && d.data && (d.data.posten || []).length)
+        .sort((a, b) => ((a.data.jahr || 0) * 100 + (a.data.monat || 0)) - ((b.data.jahr || 0) * 100 + (b.data.monat || 0)))
+        .forEach(d => d.data.posten.forEach(p => t4.push([d.period || d.name, p.nr, p.bezeichnung, p.menge, p.satz, p.betrag,
+          p.menge != null && p.satz != null ? Math.round(p.menge * p.satz * 100) / 100 : null])));
 
       const wb = XLSX.utils.book_new();
       const blatt = (rows, breiten, name) => {
@@ -417,6 +463,7 @@
       blatt(t1, [11, 4, 4, 13, 12, 30, 9, 9, 9, 9, 10, 10, 10, 8], 'Tage');
       blatt(t2, [16].concat(Array(24).fill(11)), 'Monate');
       blatt(t3, [16, 12].concat(felder.map(() => 14)), 'Lohnzettel');
+      blatt(t4, [16, 8, 30, 8, 9, 11, 13], 'Geldbeträge');
       const out = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
       const blob = new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
       anbieten(box, blob, `Stundenabgleich-Stunden-${dateiDatum()}.xlsx`,

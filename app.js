@@ -112,7 +112,7 @@ async function makeThumb(file) {
 }
 
 /* ---------- Navigation ---------- */
-const TITLES = { home: 'Übersicht', add: 'Zettel hinzufügen', docs: 'Meine Zettel' };
+const TITLES = { home: 'Übersicht', add: 'Zettel hinzufügen', docs: 'Meine Zettel', jahr: 'Jahresübersicht' };
 
 function go(view) {
   $$('.view').forEach(v => v.classList.toggle('active', v.id === 'view-' + view));
@@ -121,7 +121,16 @@ function go(view) {
   $('#add-result').innerHTML = view === 'add' ? $('#add-result').innerHTML : '';
   if (view === 'docs') renderDocs();
   if (view === 'home') renderHome();
+  if (view === 'jahr') renderJahr();
   window.scrollTo(0, 0);
+}
+
+// Nach dem Speichern die gerade sichtbare Auswertung neu zeichnen
+function aktualisiereAnsicht() {
+  const aktiv = $('.view.active');
+  if (!aktiv) return;
+  if (aktiv.id === 'view-home') renderHome();
+  if (aktiv.id === 'view-jahr') renderJahr();
 }
 
 document.addEventListener('click', e => {
@@ -525,6 +534,16 @@ function inVal(v) {
   return v || v === 0 ? String(v).replace('.', ',') : '';
 }
 
+// Geldbetrag aus einem Eingabefeld: "1.787,17" oder "1787,17" oder "1787.17"
+function geldIn(v) {
+  let t = String(v).replace(/[€\s]/g, '').replace('−', '-');
+  if (t.includes(',')) t = t.replace(/\./g, '').replace(',', '.');
+  const n = parseFloat(t);
+  return isNaN(n) ? null : Math.round(n * 100) / 100;
+}
+const geldVal = v => (v == null ? '' : v.toFixed(2).replace('.', ','));
+const eur = v => self.Auswertung.eur(v);
+
 const LOHN_FELDER = [
   ['Stunden', [
     ['stundenlohn', 'Stundenlohn (Lohnart 1000), Std.'],
@@ -557,6 +576,19 @@ function openReviewLohn(d) {
     <div class="day"><div class="day-head"><strong>${titel}</strong></div>
       ${felder.map(([k, l]) => `<label class="field">${l}<input inputmode="decimal" data-lf="${k}" value="${r[k] == null ? '' : inVal(r[k])}"></label>`).join('')}
     </div>`).join('');
+  const posten = r.posten || [];
+  const postenHtml = posten.length ? `
+    <div class="day"><div class="day-head"><strong>Geldbeträge</strong></div>
+      <p class="muted small">Satz und Betrag je Lohnart wie auf dem Lohnzettel. Die Stunden kommen aus den Feldern oben.</p>
+      ${posten.map((p, i) => `
+        <div class="posten">
+          <div class="posten-titel">${esc(p.nr)} ${esc(p.bezeichnung)}${p.std && p.menge != null ? ` <span class="muted small">· ${fmtH(p.menge)} Std.</span>` : ''}</div>
+          <div class="entry-grid two">
+            ${p.std ? `<label class="field">Satz, € pro Std.<input inputmode="decimal" data-pf="${i}:satz" value="${geldVal(p.satz)}"></label>` : '<span></span>'}
+            <label class="field">Betrag, €<input inputmode="decimal" data-pf="${i}:betrag" value="${geldVal(p.betrag)}"></label>
+          </div>
+        </div>`).join('')}
+    </div>` : '';
   // Hinweise immer frisch berechnen (z.B. wenn Urlaubsstunden fehlen, passen die bezahlten Stunden nicht)
   const warnungen = self.LohnParser.pruefe(Object.assign({}, r)).warnungen;
   const kannNeuLesen = d.blob && (/^image\//.test(d.mime || '') || /pdf/.test(d.mime || ''));
@@ -573,6 +605,7 @@ function openReviewLohn(d) {
         </div>
       </div>
       ${groups}
+      ${postenHtml}
       ${r.rohtext ? `<details class="small"><summary class="muted">Erkannter Text anzeigen</summary><pre class="rohtext">${esc(r.rohtext)}</pre></details>` : ''}
       <div class="review-actions">
         <button class="btn" data-review-open="${d.id}">Zettel ansehen</button>
@@ -615,6 +648,15 @@ async function saveReviewLohn(d) {
     if (k === 'monat' || k === 'jahr') r[k] = v ? parseInt(v, 10) : null;
     else r[k] = v === '' ? null : numIn(v);
   });
+  $$('#viewer-body [data-pf]').forEach(el => {
+    const [i, k] = el.dataset.pf.split(':');
+    const p = (r.posten || [])[+i];
+    if (!p) return;
+    const v = el.value.trim();
+    const n = v === '' ? null : geldIn(v);
+    if (n !== p[k]) { p[k] = n; if (k === 'satz') delete p.satzBerechnet; }
+  });
+  self.LohnParser.mengenAbgleichen(r);
   self.LohnParser.pruefe(r);
   // Verpflegung von Hand geändert: Aufteilung nach Tagessätzen passt dann nicht mehr
   const vSumme = (r.verpflegung || []).reduce((s, v) => s + v.betrag, 0);
@@ -627,6 +669,7 @@ async function saveReviewLohn(d) {
   await Docs.add(d);
   $('#viewer').close();
   renderDocs();
+  aktualisiereAnsicht();
 }
 
 async function openReview(id) {
@@ -787,6 +830,8 @@ async function renderAuswertung(docs) {
       </div>`;
   }
 
+  const geldHtml = r.lohn ? geldKarte(r) : '';
+
   box.innerHTML = `
     <div class="card">
       <div class="row-between"><h2>Monatsauswertung</h2>${auswahl}</div>
@@ -808,6 +853,7 @@ async function renderAuswertung(docs) {
     <div class="card"><h2>Tage</h2>${tageHtml}</div>
     <div class="card"><h2>Stunden pro Baustelle</h2>${bsHtml}</div>
     <div class="card"><h2>Abgleich mit dem Lohnzettel</h2>${abgleichHtml}</div>
+    ${geldHtml}
     <div class="card"><h2>Monatsbericht</h2>
       <p class="muted small">Übersicht, Abgleich und alle Tage von ${MONATE[monat - 1]} ${jahr} auf einer PDF, zum Ablegen oder fürs Lohnbüro.</p>
       <div class="export-actions"><button class="btn primary" data-ex="pdf" data-monat="${gewaehlterMonat}">📄 Monatsbericht als PDF</button></div>
@@ -815,8 +861,138 @@ async function renderAuswertung(docs) {
     </div>`;
 }
 
+const ICON = { ok: '✓', abw: '✗', warn: '!', info: 'ℹ︎' };
+
+// Geldbeträge: Stundensatz und Stunden × Satz = Betrag je Lohnart
+function geldKarte(r) {
+  const ss = r.stundensatz;
+  if (!r.geld.length) {
+    return `<div class="card"><h2>Geldbeträge</h2><p class="muted small">Auf dem Lohnzettel wurden keine Beträge erkannt. Tippe beim Lohnzettel auf „Prüfen“ und dann „Neu auslesen“.</p>
+      <button class="btn small" data-review="${r.lohnId}">Lohnzettel prüfen</button></div>`;
+  }
+  const abw = r.geld.filter(g => g.status === 'abw').length;
+  const offen = r.geld.filter(g => g.status === 'info' && /nicht erkannt/.test(g.hinweis)).length;
+  const satzHtml = ss && ss.jetzt != null ? `
+    <div class="kv"><span>Stundensatz</span><strong>${eur(ss.jetzt)}</strong></div>
+    ${ss.geaendert ? `<div class="notice warn-note"><strong>Neuer Stundensatz:</strong> vorher ${eur(ss.vorher)} (${esc(ss.vorherMonat)}), jetzt ${eur(ss.jetzt)}. Passt das zu deinem Vertrag oder einer Lohnerhöhung?</div>`
+      : `<p class="muted small">${ss.vorher != null ? `Gleich wie im ${esc(ss.vorherMonat)}.` : 'Noch kein früherer Lohnzettel zum Vergleich.'}</p>`}` : '';
+  const s = r.geldSumme;
+  return `
+    <div class="card"><h2>Geldbeträge</h2>
+      ${satzHtml}
+      <div class="notice ${abw ? 'err' : offen ? '' : 'ok'}">${abw ? `<strong>${abw} Betrag/Beträge</strong> passen nicht zu Stunden × Satz.`
+        : offen ? `${offen} Wert(e) auf dem Lohnzettel nicht erkannt, sonst rechnet sich alles.` : 'Alle Beträge rechnen sich: Stunden × Satz = Betrag.'}
+        ${abw || offen ? `<div style="margin-top:8px"><button class="btn small" data-review="${r.lohnId}">Lohnzettel prüfen</button></div>` : ''}</div>
+      <div class="abgleich geld">
+        <div class="ab-head"><span></span><span>Std. × Satz</span><span>Lohnzettel</span></div>
+        ${r.geld.map(g => `
+          <div class="ab-row ab-${g.status}">
+            <div class="ab-titel">${ICON[g.status]} ${esc(g.titel)}</div>
+            <span>${g.erwartet == null ? '' : eur(g.erwartet)}</span><span>${eur(g.betrag)}</span>
+            ${g.hinweis ? `<div class="ab-hinweis">${esc(g.hinweis)}</div>` : ''}
+          </div>`).join('')}
+        ${s ? `<div class="ab-row ab-summe"><div class="ab-titel">Summe</div><span></span><span>${eur(s.summe)}</span>
+          <div class="ab-hinweis">Sollte dem „Gesamt-Brutto“ auf deinem Lohnzettel entsprechen. ${s.fehlt ? `${s.fehlt} Betrag/Beträge fehlen noch.` : 'Ist sie kleiner, wurde eine Lohnart nicht erkannt.'}</div></div>` : ''}
+      </div>
+    </div>`;
+}
+
+/* ---------- Jahresübersicht ---------- */
+let gewaehltesJahr = null;
+const MON_KURZ = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
+
+async function renderJahr() {
+  const box = $('#jahr-box');
+  const docs = await Docs.all();
+  const jahre = Array.from(new Set(self.Auswertung.monateMitDaten(docs).map(k => parseInt(k.slice(0, 4), 10)))).sort((a, b) => b - a);
+  if (!jahre.length) {
+    box.innerHTML = `<div class="card"><h2>Jahresübersicht</h2><p class="muted">Sobald du Zettel hochlädst, siehst du hier dein Jahr: Arbeitszeitkonto Monat für Monat, Urlaub, Kranktage und Baustellen.</p>
+      <button class="btn primary" data-goto="add">Zettel hinzufügen</button></div>`;
+    return;
+  }
+  if (!gewaehltesJahr || !jahre.includes(gewaehltesJahr)) gewaehltesJahr = jahre[0];
+  const J = self.Auswertung.jahresuebersicht(docs, gewaehltesJahr);
+  const auswahl = jahre.length > 1
+    ? `<select id="jahr-wahl" class="monat-wahl">${jahre.map(j => `<option value="${j}"${j === gewaehltesJahr ? ' selected' : ''}>${j}</option>`).join('')}</select>` : '';
+  const mon = J.monate.filter(z => z.hatDaten);
+  const key = m => `${gewaehltesJahr}-${String(m).padStart(2, '0')}`;
+  const S = J.summe;
+
+  const monateHtml = `
+    <div class="jt jt5 jt-head"><span>Monat</span><span>Ist</span><span>Soll</span><span>Saldo</span><span>Abgleich</span></div>
+    ${mon.map(z => `
+      <button class="jt jt5 jt-row${z.abw ? ' jt-abw' : ''}" data-jahr-monat="${key(z.monat)}">
+        <span>${MON_KURZ[z.monat - 1]}${z.vollstaendig ? '' : '<sup>*</sup>'}</span>
+        ${z.hatWochen ? `<span>${zahl(z.ist)}</span><span>${zahl(z.soll)}</span>
+        <span class="${z.saldo < 0 ? 'neg' : z.saldo > 0 ? 'pos' : ''}">${zahl(z.saldo, true)}</span>` : '<span class="muted">–</span><span class="muted">–</span><span class="muted">–</span>'}
+        <span>${!z.lohn ? '<span class="muted">–</span>' : z.abw ? `✗ ${z.abw}` : '✓'}</span>
+      </button>`).join('')}
+    <div class="jt jt5 jt-sum"><span>Summe</span><span>${zahl(S.ist)}</span><span>${zahl(S.sollErfasst)}</span><span>${zahl(S.saldoGesammelt, true)}</span><span>${S.abw ? `✗ ${S.abw}` : ''}</span></div>
+    <p class="muted small">Saldo = Stunden fürs Arbeitszeitkonto. ${mon.some(z => !z.vollstaendig) ? '* Wochenzettel nicht vollständig, Soll nur für die erfassten Tage. ' : ''}Tippe auf einen Monat für die Details.</p>`;
+
+  const azkMon = J.monate.filter(z => z.azkStand != null);
+  const azkHtml = azkMon.length ? `
+    ${J.azkAktuell ? `<div class="kv"><span>Stand laut Lohnzettel ${MONATE[J.azkAktuell.monat - 1]}</span><strong class="${J.azkAktuell.stand < 0 ? 'neg' : ''}">${zahl(J.azkAktuell.stand, true)} Std.</strong></div>` : ''}
+    <div class="jt jt4 jt-head"><span>Monat</span><span>Wochenzettel</span><span>Stand</span><span></span></div>
+    ${J.monate.filter(z => z.hatWochen || z.azkStand != null).map(z => `
+      <div class="jt jt4 jt-row${z.azkStatus === 'abw' ? ' jt-abw' : ''}">
+        <span>${MON_KURZ[z.monat - 1]}</span><span>${z.hatWochen ? zahl(z.saldo, true) : '<span class="muted">–</span>'}</span><span>${z.azkStand == null ? '<span class="muted">–</span>' : zahl(z.azkStand, true)}</span>
+        <span>${z.azkStatus ? ICON[z.azkStatus] : ''}</span>
+        ${z.azkHinweis ? `<div class="jt-hinweis">${esc(z.azkHinweis)}</div>` : ''}
+      </div>`).join('')}
+    <p class="muted small">„Wochenzettel“ = Mehr- oder Minderstunden fürs Konto im Monat. „Stand“ = AZK-Std. auf dem Lohnzettel. ✓ heißt: Der Stand hat sich genau um deine Stunden verändert.</p>`
+    : '<p class="muted small">Noch kein Lohnzettel mit AZK-Stand gespeichert.</p>';
+
+  const u = J.urlaub;
+  const urlMon = J.monate.filter(z => z.urlaubTage || z.urlaubGenommen != null);
+  const urlaubHtml = `
+    ${u ? `<div class="kv"><span>Anspruch</span><strong>${zahl(u.anspruch)} Tage</strong></div>
+      <div class="kv"><span>Genommen laut Lohnzettel ${MONATE[u.monat - 1]}</span><strong>${zahl(u.genommen)} Tage</strong></div>
+      <div class="kv"><span>Rest</span><strong>${zahl(u.rest)} Tage</strong></div>` : '<p class="muted small">Noch kein Lohnzettel mit Urlaubsangaben gespeichert.</p>'}
+    <div class="kv"><span>Urlaubstage laut deinen Wochenzetteln</span><strong>${S.urlaubTage}</strong></div>
+    ${J.urlaubOffen && J.urlaubOffen.tage > 0 ? `<div class="notice warn-note"><strong>${zahl(J.urlaubOffen.tage)} Urlaubstag(e)</strong> von deinen Wochenzetteln sind bis zum Lohnzettel ${MONATE[J.urlaubOffen.monat - 1]} noch nicht abgezogen. Schau, ob sie auf dem nächsten Lohnzettel nachgebucht werden.</div>` : ''}
+    ${urlMon.length ? `<div class="jt jt4 jt-head"><span>Monat</span><span>Wochenzettel</span><span>abgezogen</span><span>offen</span></div>
+      ${urlMon.map(z => `
+        <div class="jt jt4 jt-row${z.urlaubStatus === 'warn' ? ' jt-warn' : ''}">
+          <span>${MON_KURZ[z.monat - 1]}</span><span>${z.urlaubTage}</span><span>${z.urlaubAbgezogen == null ? '<span class="muted">–</span>' : zahl(z.urlaubAbgezogen)}</span>
+          <span>${z.urlaubOffen == null ? '' : zahl(z.urlaubOffen)}</span>
+          ${z.urlaubHinweis ? `<div class="jt-hinweis">${esc(z.urlaubHinweis)}</div>` : ''}
+        </div>`).join('')}` : ''}`;
+
+  const krankMon = J.monate.filter(z => z.krankTage || z.krankStdLohn);
+  const krankHtml = `
+    <div class="kv"><span>Kranktage laut deinen Wochenzetteln</span><strong>${S.krankTage}</strong></div>
+    <div class="kv"><span>Krankstunden laut Lohnzetteln</span><strong>${zahl(S.krankStdLohn)} Std.</strong></div>
+    ${krankMon.map(z => `<div class="kv small"><span>${MONATE[z.monat - 1]}</span><span>${z.krankTage} Tag(e)${z.krankStdLohn ? `, ${zahl(z.krankStdLohn)} Std. bezahlt` : ''}</span></div>`).join('')}`;
+
+  const satzHtml = J.saetze.length ? J.saetze.map((x, i) => `
+    <div class="kv${x.vorher != null ? ' kv-neu' : ''}"><span>${i === 0 ? 'ab' : 'neu ab'} ${MONATE[x.monat - 1]}</span>
+      <strong>${eur(x.satz)}${x.vorher != null ? ` <span class="muted small">(vorher ${eur(x.vorher)})</span>` : ''}</strong></div>`).join('')
+    + `<p class="muted small">${J.saetze.length === 1 ? 'Auf allen Lohnzetteln dieses Jahres gleich.' : 'Der Stundensatz hat sich im Jahr geändert.'}</p>`
+    : '<p class="muted small">Noch kein Stundensatz erkannt.</p>';
+
+  const bsHtml = J.baustellen.length ? J.baustellen.map(b => `
+    <div class="kv"><span>${esc(b.name || 'ohne Name')}${b.kostentraeger ? ` <span class="muted small">${esc(b.kostentraeger)}</span>` : ''}</span>
+      <strong>${zahl(b.stunden)} Std. <span class="muted small">(${b.tage} T.)</span></strong></div>`).join('')
+    : '<p class="muted small">Keine Baustellenstunden erfasst.</p>';
+
+  box.innerHTML = `
+    <div class="card"><div class="row-between"><h2>Jahr ${gewaehltesJahr}</h2>${auswahl}</div>${monateHtml}</div>
+    <div class="card"><h2>Arbeitszeitkonto</h2>${azkHtml}</div>
+    <div class="card"><h2>Urlaub</h2>${urlaubHtml}</div>
+    <div class="card"><h2>Krank</h2>${krankHtml}</div>
+    <div class="card"><h2>Stundensatz</h2>${satzHtml}</div>
+    <div class="card"><h2>Stunden pro Baustelle</h2>${bsHtml}</div>`;
+}
+
+document.addEventListener('click', e => {
+  const m = e.target.closest('[data-jahr-monat]');
+  if (m) { gewaehlterMonat = m.dataset.jahrMonat; go('home'); }
+});
+
 document.addEventListener('change', e => {
   if (e.target.id === 'monat-wahl') { gewaehlterMonat = e.target.value; renderHome(); }
+  if (e.target.id === 'jahr-wahl') { gewaehltesJahr = parseInt(e.target.value, 10); renderJahr(); }
 });
 
 /* ---------- Übersicht ---------- */
@@ -853,6 +1029,14 @@ async function repariereAlteZettel() {
   try {
     const docs = await Docs.all();
     for (const d of docs) {
+      // Ältere Lohnzettel: Lohnarten mit Satz und Betrag (Geldprüfung) aus dem gespeicherten Erkennungstext nachtragen
+      if (d.type === 'lohn' && d.data && !('posten' in d.data)) {
+        const texte = d.data.rohtexte || (d.data.rohtext ? [d.data.rohtext] : []);
+        d.data.posten = texte.length ? self.LohnParser.zusammenfuehren(texte.map(t => self.LohnParser.parseLohnzettel(t))).posten : [];
+        self.LohnParser.mengenAbgleichen(d.data);
+        self.LohnParser.pruefe(d.data);
+        await Docs.add(d);
+      }
       // Ältere Lohnzettel: Urlaubs-, Krank-, Feiertags- und sonstige Stunden aus dem gespeicherten Erkennungstext nachtragen
       if (d.type === 'lohn' && d.data && (!('urlaubStd' in d.data) || !('verpflegungEuro' in d.data))) {
         const neu = d.data.rohtext ? self.LohnParser.parseLohnzettel(d.data.rohtext) : {};

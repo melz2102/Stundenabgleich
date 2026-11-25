@@ -14,6 +14,10 @@
   const near = (a, b) => Math.abs(a - b) < 0.01;
   // Zahl für Hinweistexte: 25,5 statt 25.5, echtes Minus
   const de = v => (v == null ? '–' : String(r2(v)).replace('.', ',').replace('-', '−'));
+  // Geldbetrag für Hinweistexte: 1.787,17 €
+  const eur = v => (v == null ? '–' : `${v < 0 ? '−' : ''}${Math.abs(v).toFixed(2).replace('.', ',').replace(/\B(?=(\d{3})+(?!\d))/g, '.')} €`);
+  const MONATSNAMEN = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
+  const monatText = (j, m) => `${MONATSNAMEN[m - 1]} ${j}`;
 
   function iso(d) {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -71,6 +75,78 @@
     return passend[0] || null;
   }
 
+  // Letzter Lohnzettel vor diesem Monat (für den Vergleich der Stundensätze; Lücken sind egal)
+  function frueherLohn(docs, jahr, monat) {
+    const k = jahr * 12 + monat;
+    const frueher = docs.filter(d => d.type === 'lohn' && d.data && d.data.jahr && d.data.monat && d.data.jahr * 12 + d.data.monat < k);
+    if (!frueher.length) return null;
+    const letzter = Math.max(...frueher.map(d => d.data.jahr * 12 + d.data.monat));
+    const j = Math.floor((letzter - 1) / 12), m = letzter - j * 12;
+    return findeLohn(docs, j, m);
+  }
+
+  // Satz einer Lohnart auf einem Lohnzettel (erste Zeile mit dieser Nummer)
+  const satzVon = (L, nr) => {
+    const p = (L.posten || []).find(x => x.nr === nr && x.satz != null);
+    return p ? p.satz : nr === '1000' ? L.stundensatz ?? null : null;
+  };
+
+  // Geldbeträge: Stunden × Satz = Betrag je Lohnart, Stundensatz im Vergleich zum letzten Lohnzettel
+  function geldPruefen(docs, res, L, geprueft) {
+    const posten = L.posten || [];
+    const vor = frueherLohn(docs, res.jahr, res.monat);
+    const vorL = vor ? vor.data : null;
+    const vorText = vorL ? monatText(vorL.jahr, vorL.monat) : '';
+    const satz = satzVon(L, '1000');
+    const vorSatz = vorL ? satzVon(vorL, '1000') : null;
+    res.stundensatz = { jetzt: satz, vorher: vorSatz, vorherMonat: vorText, geaendert: satz != null && vorSatz != null && !near(satz, vorSatz) };
+    const G = res.geld;
+    const LP = (typeof self !== 'undefined' && self.LohnParser) || (typeof require !== 'undefined' ? require('./lohn-parser.js') : null);
+    const feld = p => LP.stundenFeld(p.nr, p.bezeichnung);
+    let summe = 0, fehlt = 0;
+    posten.forEach(p => {
+      if (p.betrag != null) summe += p.betrag; else fehlt++;
+      const z = { titel: p.bezeichnung || p.nr, nr: p.nr, menge: p.menge, satz: p.satz, erwartet: null, betrag: p.betrag, status: 'info', hinweis: '' };
+      G.push(z);
+      if (!p.std) {
+        if (/verpfl/i.test(p.bezeichnung)) z.hinweis = 'Tage und Sätze siehe Abgleich „Verpflegung“.';
+        if (p.betrag == null) z.hinweis = 'Betrag nicht erkannt.';
+        return;
+      }
+      const f = feld(p);
+      if (!f) { z.hinweis = 'Zuschlag, wird nicht nachgerechnet.'; return; }
+      if (p.menge == null || p.satz == null || p.betrag == null) {
+        z.hinweis = `${p.satz == null ? 'Satz' : p.betrag == null ? 'Betrag' : 'Stunden'} auf dem Lohnzettel nicht erkannt. Öffne den Lohnzettel und trag ihn ein oder tippe „Neu auslesen“.`;
+        return;
+      }
+      z.erwartet = r2(p.menge * p.satz);
+      const rechnung = `${de(p.menge)} Std. × ${eur(p.satz)} = ${eur(z.erwartet)}`;
+      if (Math.abs(z.erwartet - p.betrag) > 0.011) {
+        z.status = 'abw';
+        z.hinweis = `${rechnung}, auf dem Lohnzettel stehen ${eur(p.betrag)}. `
+          + (geprueft ? `Differenz ${eur(r2(p.betrag - z.erwartet))}.` : 'Vergleich Satz und Betrag mit dem Foto, oft hat sich die Erkennung nur verlesen.');
+        return;
+      }
+      z.status = 'ok';
+      const extra = [];
+      if (p.satzBerechnet) extra.push('Satz auf dem Foto schlecht lesbar, aus Betrag ÷ Stunden berechnet.');
+      // Urlaub, Krank, Feiertag und AZK werden normalerweise mit dem Stundenlohn-Satz bezahlt
+      if (['urlaubStd', 'krankStd', 'feiertagStd', 'azkAbbau', 'azkAufbau'].includes(f) && satz != null && !near(p.satz, satz)) {
+        z.status = 'warn';
+        extra.push(`Anderer Satz als beim Stundenlohn (${eur(satz)}). Frag im Zweifel im Lohnbüro nach.`);
+      }
+      if (f !== 'stundenlohn' && vorL) {
+        const alt = satzVon(vorL, p.nr);
+        if (alt != null && !near(alt, p.satz)) { z.status = 'warn'; extra.push(`Satz geändert: vorher ${eur(alt)} (${vorText}).`); }
+      }
+      if (f === 'stundenlohn' && res.stundensatz.geaendert) z.status = 'warn';
+      z.hinweis = [rechnung + (extra.length ? '.' : ''), ...extra].join(' ');
+    });
+    if (posten.length) {
+      res.geldSumme = { summe: r2(summe), fehlt };
+    }
+  }
+
   function auswerten(docs, jahr, monat) {
     const alleTage = sammleTage(docs);
     const kalender = tageImMonat(jahr, monat);
@@ -81,7 +157,7 @@
       tage: { baustelle: 0, arbeit: 0, krank: 0, urlaub: 0, feiertag: 0, gleitzeit: 0, lehrgang: 0, unproduktiv: 0, sonstiges: 0 },
       baustellen: [], ausloese: 0, fahrt: 0, verpflTage: {}, stdKat: { urlaub: 0, krank: 0, feiertag: 0 },
       fehlendeTage: [], fehlendeKW: [], ungeprueft: 0, vollstaendig: false,
-      lohn: null, lohnVormonat: null, abgleich: [],
+      lohn: null, lohnVormonat: null, abgleich: [], geld: [], geldSumme: null, stundensatz: null,
     };
     const bs = new Map();
     const ungeprueftKW = new Set();
@@ -258,11 +334,112 @@
           add('Verpflegung, €', z, L.verpflegungEuro, 'info', 'Wochenzettel für diesen Monat unvollständig, Vergleich nicht möglich.');
         }
       }
+      geldPruefen(docs, res, L, res.lohnGeprueft);
     }
     return res;
   }
 
-  const api = { auswerten, monateMitDaten, monatssoll, sammleTage, SOLL };
+  /* ---------- Jahresübersicht ---------- */
+  // Arbeitszeitkonto und Urlaub werden über Lohnzettel-Lücken hinweg verkettet: fehlt z.B. der September,
+  // wird der Oktober mit dem August verglichen (wenn die Wochenzettel dazwischen vollständig sind).
+  function jahresuebersicht(docs, jahr) {
+    const mitDaten = new Set(monateMitDaten(docs).filter(k => k.startsWith(`${jahr}-`)).map(k => parseInt(k.slice(5), 10)));
+    const letzter = Math.max(0, ...mitDaten);
+    const out = { jahr, monate: [], summe: { ist: 0, sollErfasst: 0, saldo: 0, saldoGesammelt: 0, fahrt: 0, ausloese: 0, urlaubTage: 0, krankTage: 0, krankStdLohn: 0, abw: 0 },
+      baustellen: [], azkAktuell: null, urlaub: null, urlaubOffen: null, saetze: [] };
+    const bs = new Map();
+    // Startwerte aus dem Dezember des Vorjahres (falls vorhanden); "Urlaub genommen" beginnt jedes Jahr bei 0
+    const dez = findeLohn(docs, jahr - 1, 12);
+    let azkBasis = dez && dez.data.azkStand != null ? { stand: dez.data.azkStand, monat: 0, text: monatText(jahr - 1, 12) } : null;
+    let azkSumme = 0, azkLueckenlos = true;
+    let urlBasis = { genommen: 0, monat: 0, text: 'Jahresbeginn' };
+    let urlSumme = 0, urlLueckenlos = true, offen = null; // offen: Urlaubstage laut Wochenzetteln, die noch nicht abgezogen sind
+    let satzVorher = null;
+
+    for (let m = 1; m <= letzter; m++) {
+      const r = auswerten(docs, jahr, m);
+      const L = r.lohn;
+      const hat = mitDaten.has(m);
+      const z = {
+        monat: m, hatDaten: hat, hatWochen: r.sollErfasst > 0 || r.ist > 0, vollstaendig: r.vollstaendig, ist: r.ist, soll: r.vollstaendig ? r.soll : r.sollErfasst,
+        saldo: r.saldoGesammelt, lohn: !!L, abw: r.abgleich.filter(a => a.status === 'abw').length + r.geld.filter(g => g.status === 'abw').length,
+        urlaubTage: r.tage.urlaub, krankTage: r.tage.krank, krankStdLohn: L ? L.krankStd : null, fehlendeTage: r.fehlendeTage.length,
+        azkStand: L ? L.azkStand : null, azkErwartet: null, azkStatus: null, azkHinweis: '',
+        urlaubGenommen: L ? L.urlaubGenommen : null, urlaubAbgezogen: null, urlaubOffen: null, urlaubStatus: null, urlaubHinweis: '',
+        stundensatz: L ? satzVon(L, '1000') : null,
+      };
+      out.monate.push(z);
+      const S = out.summe;
+      if (hat) {
+        S.ist += r.ist; S.sollErfasst += z.soll; S.saldo += r.saldo; S.saldoGesammelt += r.saldoGesammelt;
+        S.fahrt += r.fahrt; S.ausloese += r.ausloese; S.urlaubTage += r.tage.urlaub; S.krankTage += r.tage.krank;
+        S.krankStdLohn += (L && L.krankStd) || 0; S.abw += z.abw;
+      }
+      r.baustellen.forEach(b => {
+        const key = b.kostentraeger || b.name;
+        const x = bs.get(key) || { kostentraeger: b.kostentraeger, name: b.name, stunden: 0, tage: 0, monate: [] };
+        x.stunden += b.stunden; x.tage += b.tage; x.monate.push(m);
+        if (!x.name && b.name) x.name = b.name;
+        bs.set(key, x);
+      });
+
+      // Arbeitszeitkonto
+      if (azkBasis) { azkSumme += r.saldoGesammelt; if (!r.vollstaendig) azkLueckenlos = false; }
+      if (L && L.azkStand != null) {
+        if (azkBasis && azkLueckenlos) {
+          z.azkErwartet = r2(azkBasis.stand + azkSumme);
+          z.azkStatus = near(z.azkErwartet, L.azkStand) ? 'ok' : 'abw';
+          const seit = azkBasis.monat === m - 1 ? '' : ` (verglichen mit ${azkBasis.text}, dazwischen fehlt ein Lohnzettel)`;
+          z.azkHinweis = z.azkStatus === 'ok' ? (seit ? `Passt${seit}.` : '')
+            : `Erwartet ${de(z.azkErwartet)} Std.: Stand ${azkBasis.text} ${de(azkBasis.stand)} ${azkSumme >= 0 ? '+' : '−'} ${de(Math.abs(r2(azkSumme)))} laut Wochenzetteln${seit}.`;
+        } else {
+          z.azkStatus = 'info';
+          z.azkHinweis = azkBasis ? 'Wochenzettel unvollständig, Vergleich nicht möglich.' : 'Erster Lohnzettel mit AZK-Stand, noch kein Vergleich.';
+        }
+        azkBasis = { stand: L.azkStand, monat: m, text: monatText(jahr, m) };
+        azkSumme = 0; azkLueckenlos = true;
+        out.azkAktuell = { stand: L.azkStand, monat: m };
+      }
+
+      // Urlaub: Tage laut Wochenzetteln gegen "Urlaub genommen" auf dem Lohnzettel
+      urlSumme += r.tage.urlaub;
+      if (!r.vollstaendig) urlLueckenlos = false;
+      if (L && L.urlaubGenommen != null) {
+        z.urlaubAbgezogen = r2(L.urlaubGenommen - urlBasis.genommen);
+        const seit = urlBasis.monat === m - 1 ? '' : ` seit ${urlBasis.text}`;
+        if (urlLueckenlos) {
+          // Kette läuft weiter (oder beginnt hier): Differenz dieses Zeitraums dazurechnen
+          const vorher = offen || 0;
+          offen = r2(vorher + urlSumme - z.urlaubAbgezogen);
+          z.urlaubOffen = offen;
+          z.urlaubStatus = near(offen, 0) ? 'ok' : 'warn';
+          z.urlaubHinweis = near(offen, 0) ? (vorher > 0 && z.urlaubAbgezogen > urlSumme ? `Die ${de(vorher)} offenen Tag(e) wurden nachgebucht, jetzt passt alles.` : '')
+            : offen > 0 ? `${de(offen)} Urlaubstag(e) laut Wochenzetteln noch nicht abgezogen. Das wird oft im Folgemonat nachgebucht.`
+            : `${de(-offen)} Tag(e) mehr abgezogen, als auf deinen Wochenzetteln stehen${seit}.`;
+        } else {
+          offen = null;
+          z.urlaubStatus = 'info';
+          z.urlaubHinweis = urlBasis.monat === 0 && !out.urlaub ? 'Für den Vergleich fehlen Wochenzettel aus den Monaten davor.'
+            : `Wochenzettel unvollständig. Abgezogen${seit}: ${de(z.urlaubAbgezogen)} Tag(e), auf den vorhandenen Wochenzetteln: ${de(urlSumme)}.`;
+        }
+        urlBasis = { genommen: L.urlaubGenommen, monat: m, text: monatText(jahr, m) };
+        urlSumme = 0; urlLueckenlos = true;
+        out.urlaub = { anspruch: L.urlaubAnspruch, genommen: L.urlaubGenommen, rest: L.urlaubRest, monat: m };
+        out.urlaubOffen = offen == null ? null : { tage: offen, monat: m };
+      }
+
+      // Stundensatz-Verlauf
+      if (z.stundensatz != null) {
+        if (satzVorher == null || !near(satzVorher, z.stundensatz)) out.saetze.push({ monat: m, satz: z.stundensatz, vorher: satzVorher });
+        satzVorher = z.stundensatz;
+      }
+    }
+    Object.keys(out.summe).forEach(k => { out.summe[k] = r2(out.summe[k]); });
+    out.baustellen = Array.from(bs.values()).map(b => ({ ...b, stunden: r2(b.stunden) })).sort((a, b) => b.stunden - a.stunden);
+    return out;
+  }
+
+  const api = { auswerten, jahresuebersicht, monateMitDaten, monatssoll, sammleTage, SOLL, eur };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Auswertung = api;
 })(typeof self !== 'undefined' ? self : this);

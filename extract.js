@@ -124,18 +124,21 @@
 
   // Die Spalte "Betrag" steht hinter einem senkrechten Strich und wird bei großen Fotos oft übersprungen.
   // Dann lesen wir nur diese Spalte neben den Lohnarten noch einmal und ordnen die Beträge zeilenweise zu.
-  async function verpflegungNachlesen(worker, canvas, data) {
+  async function betraegeNachlesen(worker, canvas, data) {
     const istLa = l => /^\W{0,3}\d{4}\s+[A-Za-zÄÖÜäöü]/.test(l.text.trim());
     const alle = (data.lines || []).filter(istLa).sort((a, b) => a.bbox.y0 - b.bbox.y0);
-    const start = alle.findIndex(l => /verpfl/i.test(l.text));
-    if (start < 0) return null;
+    if (!alle.length) return null;
     const rowH = alle.reduce((s, l) => s + l.bbox.y1 - l.bbox.y0, 0) / alle.length;
-    // zusammenhängender Lohnarten-Block um die Verpflegungszeilen
-    let a = start, b = start;
-    while (a > 0 && alle[a].bbox.y0 - alle[a - 1].bbox.y0 < 2.5 * rowH) a--;
-    while (b < alle.length - 1 && alle[b + 1].bbox.y0 - alle[b].bbox.y0 < 2.5 * rowH) b++;
-    const block = alle.slice(a, b + 1);
-    const ohneBetrag = block.filter(l => !/\d,\d{2}\s*\W{0,3}$/.test(l.text.trim()));
+    // größter zusammenhängender Block von Lohnarten-Zeilen (die Brutto-Bezüge)
+    const bloecke = [];
+    alle.forEach((l, i) => {
+      if (i && l.bbox.y0 - alle[i - 1].bbox.y0 < 2.5 * rowH) bloecke[bloecke.length - 1].push(l);
+      else bloecke.push([l]);
+    });
+    const block = bloecke.sort((x, y) => y.length - x.length)[0];
+    const hatBetrag = l => /\d,\d{2}\s*\W{0,3}$/.test(l.text.trim());
+    const ohneBetrag = block.filter(l => !hatBetrag(l));
+    if (!ohneBetrag.length) return null; // alle Beträge schon gelesen
     const left = Math.round(Math.max(...(ohneBetrag.length ? ohneBetrag : block).map(l => l.bbox.x1)) + rowH);
     const top = Math.max(0, Math.round(Math.min(...block.map(l => l.bbox.y0)) - rowH));
     const bottom = Math.min(canvas.height, Math.round(Math.max(...block.map(l => l.bbox.y1)) + rowH));
@@ -145,9 +148,9 @@
     await worker.setParameters({ tessedit_pageseg_mode: '3' });
     const betraege = col.text.split('\n').map(z => (z.match(/(\d{1,3}(?:\.\d{3})*,\d{2})\s*\W{0,3}$/) || [])[1]).filter(Boolean);
     if (betraege.length !== block.length) return null;
-    const text = block.map((l, i) => `${l.text.trim()}   ${betraege[i]}`).join('\n');
+    const text = block.map((l, i) => (hatBetrag(l) ? l.text.trim() : `${l.text.trim()}   ${betraege[i]}`)).join('\n');
     const r = self.LohnParser.parseLohnzettel(text);
-    return r.verpflegungEuro != null ? { verpflegungEuro: r.verpflegungEuro, verpflegung: r.verpflegung } : null;
+    return { posten: r.posten, verpflegungEuro: r.verpflegungEuro, verpflegung: r.verpflegung };
   }
 
   async function ocrLohnzettel(src, onProgress) {
@@ -164,8 +167,14 @@
         const { data } = await worker.recognize(canvas);
         const r = self.LohnParser.parseLohnzettel(data.text);
         r.rohtext = data.text;
-        if (passIdx === 0 && r.verpflegungEuro == null && /verpfl/i.test(data.text)) {
-          try { Object.assign(r, await verpflegungNachlesen(worker, canvas, data)); } catch (e) { /* dann von Hand eintragen */ }
+        if (passIdx === 0) {
+          try {
+            const nach = await betraegeNachlesen(worker, canvas, data);
+            if (nach) {
+              if (nach.posten.length >= r.posten.length) r.posten = nach.posten;
+              if (r.verpflegungEuro == null && nach.verpflegungEuro != null) Object.assign(r, { verpflegungEuro: nach.verpflegungEuro, verpflegung: nach.verpflegung });
+            }
+          } catch (e) { /* dann von Hand eintragen */ }
         }
         results.push(r);
         if (results.length >= 2) {
@@ -179,6 +188,7 @@
     }
     const merged = self.LohnParser.zusammenfuehren(results);
     merged.rohtext = results[0].rohtext;
+    merged.rohtexte = results.map(r => r.rohtext); // alle Durchläufe, damit spätere App-Versionen neu auswerten können
     merged.durchlaeufe = results.length;
     return merged;
   }

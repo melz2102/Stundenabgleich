@@ -8,6 +8,11 @@ Handy-App (Web-App/PWA) zum Abgleich von Wochenzetteln (Stundenerfassungsblatt) 
 
 Stand: Wochenzettel als Excel (.xls/.xlsx, SheetJS) oder PDF (pdf.js) werden ausgelesen, handgeschriebene per Foto von Hand eingetragen, Lohnzettel (Foto oder PDF) mit Tesseract.js direkt auf dem Handy. Alle Werte lassen sich prüfen und korrigieren. Monatsauswertung mit Abgleich gegen den Lohnzettel.
 
+## Geldbeträge und Jahresübersicht
+
+- **Geldbeträge** (Karte unter dem Abgleich): Für jede Lohnart mit Stunden wird Stunden × Satz mit dem Betrag verglichen. Ist der Faktor auf dem Foto unleserlich, wird er aus Betrag ÷ Stunden berechnet, wenn das glatt aufgeht. Hinweis, wenn sich der Stundensatz gegenüber dem letzten Lohnzettel ändert oder Urlaub/Krank/AZK mit einem anderen Satz als der Stundenlohn bezahlt werden. Summe aller Beträge zum Vergleich mit dem Gesamt-Brutto. Bei großen Fotos liest `extract.js` die Spalte „Betrag“ gezielt nach (`betraegeNachlesen`).
+- **Jahresübersicht** (Tab „Jahr“): Monate mit Ist/Soll/Saldo und Abgleich-Ergebnis, Arbeitszeitkonto Monat für Monat (über fehlende Lohnzettel hinweg verkettet), Urlaub mit noch nicht abgezogenen Tagen, Kranktage, Stundensatz-Verlauf, Baustellen im Jahr.
+
 ## Sicherung und Export (`export.js`)
 
 - **Sicherungsdatei** (`Stundenabgleich-Sicherung-JJJJ-MM-TT.json`): alle Zettel samt Fotos/PDFs/Excel (als Base64). Teilen bzw. „In Dateien sichern“ (iCloud Drive, Google Drive). „Sicherung einlesen“ fügt fehlende Zettel hinzu und ersetzt nur ältere Stände. Nach 30 Tagen ohne Sicherung erinnert die Übersicht.

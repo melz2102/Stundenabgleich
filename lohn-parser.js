@@ -41,6 +41,28 @@
     return { line: '', nums: [] };
   }
 
+  // Welches Stundenfeld eine Lohnart füllt (null = Zuschlag, keine zusätzlichen Stunden)
+  function stundenFeld(nr, bez) {
+    const b = String(bez || '').toLowerCase();
+    if (/zuschl/.test(b)) return null;
+    if (nr === '1000' || /stundenlohn/.test(b)) return 'stundenlohn';
+    if (/fahrgeld|fahrzeit/.test(b)) return 'fahrgeldStd';
+    if (/abbau.*(arbeitszeit|azk)/.test(b)) return 'azkAbbau';
+    if (/aufbau.*(arbeitszeit|azk)|zuf[üu]hrung/.test(b)) return 'azkAufbau';
+    if (/[üu]berstund|mehrarbeit/.test(b)) return 'ueberstundenLohnart';
+    if (/urlaub/.test(b)) return 'urlaubStd';
+    if (/krank/.test(b)) return 'krankStd';
+    if (/feiertag/.test(b)) return 'feiertagStd';
+    return 'sonstigeStd';
+  }
+
+  // Kennzeichen-Spalten (St/SV/GB: "L L J") und OCR-Reste am Ende der Bezeichnung entfernen
+  const bezSauber = b => String(b).replace(/(\s+(?:\S{1,2}|[A-Z0-9|[\].:;]{3,4}))+$/, '').trim();
+  const BETRAG = '\\d{1,3}(?:\\.\\d{3})*,\\d{2}';
+  const r2 = v => Math.round(v * 100) / 100;
+  // Stunden × Satz = Betrag? (DATEV rundet pro Zeile auf Cent)
+  const rechnetSich = (menge, satz, betrag) => Math.abs(menge * satz - betrag) <= 0.011;
+
   // Weitere bezahlte Stunden außer Stundenlohn (Urlaub, Krank, Feiertag, Sonstiges)
   const ABWESENHEIT = ['urlaubStd', 'krankStd', 'feiertagStd', 'sonstigeStd'];
   const sumAbw = r => ABWESENHEIT.reduce((s, f) => s + (r[f] || 0), 0);
@@ -57,7 +79,7 @@
       azkStand: null,
       urlaubAnspruch: null, urlaubGenommen: null, urlaubRest: null,
       zeitlohnStd: null, ueberstd: null, bezahltStd: null,
-      lohnarten: [], warnungen: [],
+      lohnarten: [], posten: [], warnungen: [],
     };
     const add = (f, v) => { r[f] = Math.round(((r[f] || 0) + v) * 100) / 100; };
 
@@ -71,30 +93,39 @@
     const d = all.match(/\b(\d{2}\.\d{2}\.20\d\d)\b/);
     if (d) r.abrechnungsdatum = d[1];
 
-    // Lohnarten mit Einheit Std (OCR liest "Std" auch als "Sta", "5td", "Sid" …)
-    for (const raw of lines) {
+    // Brutto-Bezüge: von der Überschrift bis "Gesamt-Brutto" / "Steuer-Brutto" (ohne Überschrift: alles)
+    const bStart = Math.max(0, findLineIndex(lines, /brutto-?\s?b[a-zäöü]{1,2}z/i));
+    let bEnde = findLineIndex(lines, /gesamt-?\s?br|steuer-?\s?brutto/i, bStart + 1);
+    if (bEnde < 0) bEnde = lines.length;
+
+    // Lohnarten mit Einheit Std (OCR liest "Std" auch als "Sta", "5td", "Sid" …): Menge, Faktor (€/Std.) und Betrag
+    lines.forEach((raw, idx) => {
       const l = fixDigits(raw);
-      const la = l.match(/^\W{0,3}(\d{4})\s+(.+?)\s+[S5s][tfi][dao4l]\.?\s+(\d{1,3}(?:\.\d{3})*,\d{2})(?:\s+(\d{1,3}[,/.]\d{2}))?/i);
-      if (!la) continue;
+      const la = l.match(/^\W{0,3}(\d{4})\s+(.+?)\s+[S5s][tfi][dao4l]\.?\s+(\d{1,3}(?:\.\d{3})*,\d{2})(?![\d,])/i);
+      if (!la) {
+        // Lohnart ohne Stunden, nur mit Betrag (z.B. Verpflegung, Weihnachtsgeld)
+        if (idx < bStart || idx >= bEnde) return;
+        const g = l.match(new RegExp(`^\\W{0,3}(\\d{4})\\s+([A-Za-zÄÖÜäöü].*?)\\s+(${BETRAG})\\s*\\W{0,3}$`));
+        if (g) r.posten.push({ nr: g[1], bezeichnung: bezSauber(g[2]), std: false, menge: null, satz: null, betrag: deNum(g[3]) });
+        return;
+      }
       const nr = la[1];
       const bez = la[2].trim();
       const menge = deNum(la[3]);
+      const rest = l.slice(la.index + la[0].length);
+      const fM = rest.match(/^\s+(\d{1,3}[,/.]\d{2})(?![\d.,])/);
+      let satz = fM ? deNum(fM[1].replace(/[/.]/, ',')) : null;
+      const bM = rest.match(new RegExp(`(${BETRAG})\\s*\\W{0,3}$`));
+      let betrag = bM && (!fM || bM.index >= fM[0].length) ? deNum(bM[1]) : null;
+      // Nur eine Zahl hinter der Menge: ab 80 ist es der Betrag (so hohe Stundensätze gibt es hier nicht)
+      if (satz != null && betrag == null && satz > 80) { betrag = satz; satz = null; }
       r.lohnarten.push({ nr, bezeichnung: bez, menge });
-      const b = bez.toLowerCase();
-      if (/zuschl/.test(b)) continue; // Zuschläge sind keine zusätzlichen Stunden
-      if (nr === '1000' || /stundenlohn/.test(b)) {
-        add('stundenlohn', menge);
-        const f = la[4] && deNum(la[4].replace('/', ','));
-        if (f) r.stundensatz = f;
-      } else if (/fahrgeld|fahrzeit/.test(b)) add('fahrgeldStd', menge);
-      else if (/abbau.*(arbeitszeit|azk)/.test(b)) add('azkAbbau', menge);
-      else if (/aufbau.*(arbeitszeit|azk)|zuf[üu]hrung/.test(b)) add('azkAufbau', menge);
-      else if (/[üu]berstund|mehrarbeit/.test(b)) add('ueberstundenLohnart', menge);
-      else if (/urlaub/.test(b)) add('urlaubStd', menge);
-      else if (/krank/.test(b)) add('krankStd', menge);
-      else if (/feiertag/.test(b)) add('feiertagStd', menge);
-      else add('sonstigeStd', menge);
-    }
+      r.posten.push({ nr, bezeichnung: bezSauber(bez), std: true, menge, satz, betrag });
+      const feld = stundenFeld(nr, bez);
+      if (!feld) return; // Zuschläge sind keine zusätzlichen Stunden
+      add(feld, menge);
+      if (feld === 'stundenlohn' && satz && r.stundensatz == null) r.stundensatz = satz;
+    });
 
     // Verpflegungsmehraufwand (z.B. "2045 Verpflegungsmehraufw 14€ stpfl ... 56,00"): Betrag am Zeilenende.
     // Ein Betrag zählt nur, wenn er ein Vielfaches des Tagessatzes ist – so fallen verlesene Zahlen auf.
@@ -177,12 +208,79 @@
     if (r.bezahltStd != null && r.zeitlohnStd != null && !near(r.bezahltStd, bezahltErwartet(r))) {
       r.warnungen.push('Bezahlte Stunden passen nicht zu Zeitlohn + Urlaub/Krank/Feiertag + Überstunden + AZK-Abbau. Bitte prüfen.');
     }
+    (r.posten || []).forEach(p => {
+      if (p.std && stundenFeld(p.nr, p.bezeichnung) && p.menge != null && p.satz != null && p.betrag != null && !rechnetSich(p.menge, p.satz, p.betrag)) {
+        r.warnungen.push(`${p.bezeichnung}: Stunden × Satz ergibt nicht den Betrag. Bitte Satz und Betrag prüfen.`);
+      }
+    });
     return r;
   }
 
   const FELDER = ['monat', 'jahr', 'abrechnungsdatum', 'stundenlohn', 'stundensatz', 'fahrgeldStd', 'azkAbbau', 'azkAufbau',
     'ueberstundenLohnart', 'urlaubStd', 'krankStd', 'feiertagStd', 'sonstigeStd', 'verpflegungEuro', 'azkStand',
     'urlaubAnspruch', 'urlaubGenommen', 'urlaubRest', 'zeitlohnStd', 'ueberstd', 'bezahltStd'];
+
+  // Häufigster Wert (ohne null), bei Gleichstand der frühere
+  function mehrheit(werte) {
+    const counts = new Map();
+    werte.forEach((v, i) => {
+      if (v == null) return;
+      const c = counts.get(v) || { v, n: 0, first: i };
+      c.n++;
+      counts.set(v, c);
+    });
+    const best = Array.from(counts.values()).sort((a, b) => b.n - a.n || a.first - b.first)[0];
+    return best ? best.v : null;
+  }
+
+  // Lohnarten-Zeilen mehrerer Durchläufe zusammenführen. Schlüssel: Nummer + wievielte Zeile mit dieser Nummer
+  // (z.B. zwei Zeilen Stundenlohn, wenn sich der Satz im Monat ändert).
+  function postenZusammenfuehren(results) {
+    const mitSchluessel = list => {
+      const n = {};
+      return (list || []).map(p => [`${p.nr}#${(n[p.nr] = (n[p.nr] || 0) + 1)}`, p]);
+    };
+    const listen = results.map(r => mitSchluessel(r.posten));
+    const maps = listen.map(l => new Map(l));
+    const reihenfolge = [];
+    listen.slice().sort((a, b) => b.length - a.length).forEach(l => l.forEach(([k]) => { if (!reihenfolge.includes(k)) reihenfolge.push(k); }));
+    const nrSort = k => parseInt(k, 10);
+    reihenfolge.sort((a, b) => nrSort(a) - nrSort(b) || a.localeCompare(b));
+    return reihenfolge.map(k => {
+      const kand = maps.map(m => m.get(k)).filter(Boolean);
+      const mitStd = kand.filter(p => p.std);
+      const std = mitStd.length > 0;
+      const bezeichnung = (std ? mitStd : kand).map(p => p.bezeichnung).sort((a, b) => a.length - b.length)[0];
+      const menge = std ? mehrheit(mitStd.map(p => p.menge)) : null;
+      const betrag = mehrheit(kand.map(p => p.betrag));
+      const out = { nr: kand[0].nr, bezeichnung, std, menge, satz: null, betrag };
+      if (std) {
+        // Ein Satz, mit dem die Rechnung aufgeht, schlägt den häufigsten
+        const passend = mitStd.find(p => p.satz != null && menge != null && betrag != null && rechnetSich(menge, p.satz, betrag));
+        out.satz = passend ? passend.satz : mehrheit(mitStd.map(p => p.satz));
+        // Faktor auf dem Foto unleserlich (z.B. "23,2%"): aus Betrag ÷ Stunden berechnen, wenn das glatt aufgeht
+        if (menge && betrag != null && (out.satz == null || !rechnetSich(menge, out.satz, betrag))) {
+          const s = r2(betrag / menge);
+          if (Math.abs(s * menge - betrag) <= 0.006 && (out.satz == null || Math.abs(s - out.satz) < 1)) { out.satz = s; out.satzBerechnet = true; }
+        }
+      }
+      return out;
+    });
+  }
+
+  // Stunden der Lohnart-Zeilen an die (evtl. von Hand korrigierten) Stundenfelder angleichen,
+  // wenn genau eine Zeile zu einem Feld gehört
+  function mengenAbgleichen(r) {
+    const proFeld = {};
+    (r.posten || []).filter(p => p.std).forEach(p => {
+      const f = stundenFeld(p.nr, p.bezeichnung);
+      if (f) (proFeld[f] = proFeld[f] || []).push(p);
+    });
+    Object.entries(proFeld).forEach(([f, ps]) => { if (ps.length === 1 && r[f] != null) ps[0].menge = r[f]; });
+    const sl = proFeld.stundenlohn;
+    if (sl && sl.length === 1 && sl[0].satz != null) r.stundensatz = sl[0].satz;
+    return r;
+  }
 
   // Mehrere Erkennungsdurchläufe zusammenführen: pro Feld gewinnt der häufigste Wert, bei Gleichstand der frühere Durchlauf.
   function zusammenfuehren(results) {
@@ -215,10 +313,12 @@
       const passend = results.find(r => felder.every(f => r[f] != null) && ok(Object.assign({}, out, felder.reduce((o, f) => (o[f] = r[f], o), {}))));
       if (passend) felder.forEach(f => { out[f] = passend[f]; out['_' + f + 'Sicher'] = true; });
     }
+    out.posten = postenZusammenfuehren(results);
+    mengenAbgleichen(out);
     return pruefe(out);
   }
 
-  const api = { parseLohnzettel: parse, pruefe, zusammenfuehren, deNum, ABWESENHEIT };
+  const api = { parseLohnzettel: parse, pruefe, zusammenfuehren, mengenAbgleichen, stundenFeld, deNum, ABWESENHEIT };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.LohnParser = api;
 })(typeof self !== 'undefined' ? self : this);
