@@ -536,6 +536,8 @@ async function renderAuswertung(docs) {
       <div class="kv"><span>davon Urlaub, krank, Feiertag</span><strong>${zahl(r.unprod)}</strong></div>
       <div class="kv"><span>Mehrstunden</span><strong>${zahl(r.mehr, true)}</strong></div>
       <div class="kv"><span>Minderstunden (inkl. Gleitzeit)</span><strong>${zahl(r.mind)}</strong></div>
+      ${r.mehrVerguetet ? `<div class="kv"><span>Überstunden zum Auszahlen („vergüten“)</span><strong>${zahl(r.mehrVerguetet)}</strong></div>` : ''}
+      <div class="kv"><span>Fürs Arbeitszeitkonto</span><strong>${zahl(r.saldoGesammelt, true)}</strong></div>
       ${r.fahrt ? `<div class="kv"><span>Fahrtätigkeit</span><strong>${zahl(r.fahrt)} Std.</strong></div>` : ''}
       ${r.ausloese ? `<div class="kv"><span>Auslöse / Verpflegung</span><strong>${zahl(r.ausloese)} €</strong></div>` : ''}
     </div>

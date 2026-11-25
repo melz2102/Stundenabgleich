@@ -79,7 +79,7 @@
       } else if (/fahrgeld|fahrzeit/.test(b)) r.fahrgeldStd = (r.fahrgeldStd || 0) + menge;
       else if (/abbau.*(arbeitszeit|azk)/.test(b)) r.azkAbbau = (r.azkAbbau || 0) + menge;
       else if (/aufbau.*(arbeitszeit|azk)|zuf[üu]hrung/.test(b)) r.azkAufbau = (r.azkAufbau || 0) + menge;
-      else if (/[üu]berstund|mehrarbeit/.test(b)) r.ueberstundenLohnart = (r.ueberstundenLohnart || 0) + menge;
+      else if (/[üu]berstund|mehrarbeit/.test(b) && !/zuschl/.test(b)) r.ueberstundenLohnart = (r.ueberstundenLohnart || 0) + menge;
     }
 
     // Arbeitszeitkonto-Stand ("AZK-Std. 4,25-")

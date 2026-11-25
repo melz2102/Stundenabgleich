@@ -97,7 +97,8 @@
       const kats = new Set();
       for (const e of t.eintraege) {
         res.prod += e.prod; res.unprod += e.unprod; res.mehr += e.mehr; res.mind += e.mind;
-        if (t.verguetet) res.mehrVerguetet += e.mehr;
+        // "Mehrstunden vergüten" angekreuzt: der Saldo dieser Tage wird ausgezahlt statt aufs Arbeitszeitkonto gebucht
+        if (t.verguetet) res.mehrVerguetet += e.mehr + e.mind;
         res.ausloese += e.ausloese || 0; res.fahrt += e.fahrt || 0;
         kats.add(e.kategorie);
         if (e.prod > 0 && (e.kategorie === 'baustelle' || e.kategorie === 'arbeit')) {
@@ -115,6 +116,7 @@
     ['prod', 'unprod', 'mehr', 'mind', 'ausloese', 'fahrt', 'sollErfasst', 'mehrVerguetet'].forEach(k => { res[k] = r2(res[k]); });
     res.ist = r2(res.prod + res.unprod);
     res.saldo = r2(res.mehr + res.mind);
+    res.mehrVerguetet = r2(Math.max(res.mehrVerguetet, 0));
     res.saldoGesammelt = r2(res.saldo - res.mehrVerguetet);
     res.fehlendeKW = Array.from(new Set(res.fehlendeKW));
     res.ungeprueft = ungeprueftKW.size;
@@ -140,9 +142,9 @@
         add('Bezahlte Grundstunden (Stundenlohn + AZK-Abbau)', res.soll, grund, near(grund, res.soll) ? 'ok' : 'abw',
           near(grund, res.soll) ? 'Entspricht dem Monatssoll.' : `Abweichung ${r2(grund - res.soll)} Std. zum Monatssoll.`);
       }
-      // 2) Stundenlohn = Ist − gesammelte Mehrstunden
+      // 2) Stundenlohn = Ist − ausgezahlte Überstunden − aufs Konto gebuchte Mehrstunden
       if (L.stundenlohn != null) {
-        const erwartet = r2(res.ist - Math.max(res.saldo, 0));
+        const erwartet = r2(res.ist - res.mehrVerguetet - Math.max(res.saldoGesammelt, 0));
         if (res.vollstaendig) {
           add('Stundenlohn', erwartet, L.stundenlohn, near(erwartet, L.stundenlohn) ? 'ok' : 'abw',
             near(erwartet, L.stundenlohn) ? 'Passt zu deinen Wochenzetteln.' : `Abweichung ${r2(L.stundenlohn - erwartet)} Std.`);
@@ -170,9 +172,15 @@
       // 5) Arbeitszeitkonto-Stand
       if (L.azkStand != null) {
         const vorStand = res.lohnVormonat && res.lohnVormonat.azkStand;
-        add('AZK-Stand laut Lohnzettel', null, L.azkStand, 'info',
-          vorStand != null ? `Vormonat ${vorStand}, Veränderung ${r2(L.azkStand - vorStand)} Std. (Monatssaldo laut Wochenzetteln ${res.saldoGesammelt}).`
-            : 'Zum Vergleich der Veränderung fehlt der Lohnzettel vom Vormonat.');
+        if (vorStand != null && res.vollstaendig) {
+          const veraenderung = r2(L.azkStand - vorStand);
+          add('Veränderung Arbeitszeitkonto', res.saldoGesammelt, veraenderung, near(veraenderung, res.saldoGesammelt) ? 'ok' : 'abw',
+            `Stand jetzt ${L.azkStand} Std., Vormonat ${vorStand} Std.`);
+        } else {
+          add('AZK-Stand laut Lohnzettel', null, L.azkStand, 'info',
+            vorStand == null ? 'Zum Vergleich der Veränderung fehlt der Lohnzettel vom Vormonat.'
+              : 'Wochenzettel für diesen Monat unvollständig, Vergleich nicht möglich.');
+        }
       }
       // 6) Urlaub
       if (L.urlaubGenommen != null) {

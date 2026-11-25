@@ -15,4 +15,8 @@ Abgeleitet aus der Abrechnung Oktober 2026, bitte bei Bedarf anpassen (`auswertu
 - Soll: Mo–Do 8,5 Std., Fr 5,0 Std. Feiertage zählen zum Soll.
 - Ist = produktive + unproduktive Stunden (Urlaub, krank, Feiertag). Saldo = Mehr- + Minderstunden laut Wochenzettel.
 - Stundenlohn (Lohnart 1000) + Abbau Arbeitszeitkonto = Monatssoll.
-- Fehlstunden (Saldo < 0) werden vom Arbeitszeitkonto abgebaut, gesammelte Mehrstunden nicht ausgezahlt.
+- Fehlstunden (Saldo < 0) werden vom Arbeitszeitkonto abgebaut.
+- Mehrstunden gehen aufs Arbeitszeitkonto ("sammeln" oder nichts angekreuzt). Ist auf dem Wochenzettel "vergüten" angekreuzt, wird der Saldo dieser Woche als Überstunden ausgezahlt.
+- AZK-Std. auf dem Lohnzettel ist der Kontostand ("4,25-" = minus 4,25 Std.). Seine Veränderung zum Vormonat muss dem gesammelten Monatssaldo entsprechen.
+
+Von Kevin bestätigt am 25.11.2026.
