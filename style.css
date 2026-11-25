@@ -237,3 +237,16 @@ button.jt-row:active { background: var(--bg); }
 .day.day-unsicher { border-left: 4px solid #d98e04; }
 .warn-text { color: var(--warn); }
 .hand-auto { display: flex; align-items: center; gap: 8px; }
+
+/* Prüfen/Eintragen: Kopf und Inhalt als Spalte (der Inhalt endet nicht mehr unter dem Bildschirmrand,
+   auch nicht bei iPhones mit Notch), Speichern-Leiste bleibt unten sichtbar */
+dialog#viewer { height: 100vh; height: 100dvh; max-height: 100dvh; }
+dialog#viewer[open] { display: flex; flex-direction: column; }
+dialog#viewer .viewer-head { flex: none; }
+#viewer-body { flex: 1 1 auto; min-height: 0; height: auto; }
+.review .review-actions {
+  position: sticky; bottom: 0; z-index: 3;
+  margin: 0 -16px; padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
+  background: var(--bg); border-top: 1px solid var(--line);
+}
+.review .review-actions .btn.primary { flex: 1 1 auto; }
