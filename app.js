@@ -491,6 +491,10 @@ function inVal(v) {
 const LOHN_FELDER = [
   ['Stunden', [
     ['stundenlohn', 'Stundenlohn (Lohnart 1000), Std.'],
+    ['urlaubStd', 'Urlaubsstunden'],
+    ['krankStd', 'Krankstunden'],
+    ['feiertagStd', 'Feiertagsstunden'],
+    ['sonstigeStd', 'Sonstige bezahlte Std. (andere Lohnarten)'],
     ['fahrgeldStd', 'Fahrgeld, Std.'],
     ['zeitlohnStd', 'Zeitlohn Std. (Kopf)'],
     ['ueberstd', 'Überstunden (Kopf)'],
@@ -767,6 +771,16 @@ async function repariereAlteZettel() {
   try {
     const docs = await Docs.all();
     for (const d of docs) {
+      // Ältere Lohnzettel: Urlaubs-, Krank-, Feiertags- und sonstige Stunden aus dem gespeicherten Erkennungstext nachtragen
+      if (d.type === 'lohn' && d.data && !('urlaubStd' in d.data)) {
+        const neu = d.data.rohtext ? self.LohnParser.parseLohnzettel(d.data.rohtext) : {};
+        let gefunden = false;
+        self.LohnParser.ABWESENHEIT.forEach(f => { d.data[f] = neu[f] ?? null; if (neu[f]) gefunden = true; });
+        self.LohnParser.pruefe(d.data);
+        if (gefunden && d.status === 'geprueft') d.status = 'ausgelesen'; // neue Werte bitte noch einmal ansehen
+        await Docs.add(d);
+        continue;
+      }
       if (d.type !== 'woche' || !d.data || !d.data.tage) continue;
       const m = d.data.vom && d.data.vom.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
       if (!m || d.data.tage.every(t => t.datum)) continue;

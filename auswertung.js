@@ -74,7 +74,7 @@
       soll: monatssoll(jahr, monat), sollErfasst: 0,
       ist: 0, prod: 0, unprod: 0, mehr: 0, mind: 0, saldo: 0, mehrVerguetet: 0,
       tage: { baustelle: 0, arbeit: 0, krank: 0, urlaub: 0, feiertag: 0, gleitzeit: 0, lehrgang: 0, unproduktiv: 0, sonstiges: 0 },
-      baustellen: [], ausloese: 0, fahrt: 0,
+      baustellen: [], ausloese: 0, fahrt: 0, stdKat: { urlaub: 0, krank: 0, feiertag: 0 },
       fehlendeTage: [], fehlendeKW: [], ungeprueft: 0, vollstaendig: false,
       lohn: null, lohnVormonat: null, abgleich: [],
     };
@@ -100,6 +100,7 @@
         // "Mehrstunden vergüten" angekreuzt: der Saldo dieser Tage wird ausgezahlt statt aufs Arbeitszeitkonto gebucht
         if (t.verguetet) res.mehrVerguetet += e.mehr + e.mind;
         res.ausloese += e.ausloese || 0; res.fahrt += e.fahrt || 0;
+        if (e.kategorie in res.stdKat) res.stdKat[e.kategorie] += e.prod + e.unprod;
         kats.add(e.kategorie);
         if (e.prod > 0 && (e.kategorie === 'baustelle' || e.kategorie === 'arbeit')) {
           const key = e.kostentraeger || e.beschreibung || 'ohne Angabe';
@@ -114,6 +115,7 @@
     }
 
     ['prod', 'unprod', 'mehr', 'mind', 'ausloese', 'fahrt', 'sollErfasst', 'mehrVerguetet'].forEach(k => { res[k] = r2(res[k]); });
+    Object.keys(res.stdKat).forEach(k => { res.stdKat[k] = r2(res.stdKat[k]); });
     res.ist = r2(res.prod + res.unprod);
     res.saldo = r2(res.mehr + res.mind);
     res.mehrVerguetet = r2(Math.max(res.mehrVerguetet, 0));
@@ -136,15 +138,17 @@
     const add = (titel, zettel, lohn, status, hinweis) => A.push({ titel, zettel, lohn, status, hinweis });
 
     if (L) {
-      // 1) Bezahlte Grundstunden = Monatssoll
+      const abwLohn = (L.urlaubStd || 0) + (L.krankStd || 0) + (L.feiertagStd || 0) + (L.sonstigeStd || 0);
+      const abwZettel = res.stdKat.urlaub + res.stdKat.krank + res.stdKat.feiertag;
+      // 1) Bezahlte Grundstunden (Stundenlohn + Urlaub + Krank + Feiertag + AZK-Abbau) = Monatssoll
       if (L.stundenlohn != null) {
-        const grund = r2(L.stundenlohn + (L.azkAbbau || 0) - (L.azkAufbau || 0));
-        add('Bezahlte Grundstunden (Stundenlohn + AZK-Abbau)', res.soll, grund, near(grund, res.soll) ? 'ok' : 'abw',
+        const grund = r2(L.stundenlohn + abwLohn + (L.azkAbbau || 0) - (L.azkAufbau || 0));
+        add('Bezahlte Grundstunden (Stundenlohn + Urlaub + Krank + AZK-Abbau)', res.soll, grund, near(grund, res.soll) ? 'ok' : 'abw',
           near(grund, res.soll) ? 'Entspricht dem Monatssoll.' : `Abweichung ${r2(grund - res.soll)} Std. zum Monatssoll.`);
       }
-      // 2) Stundenlohn = Ist − ausgezahlte Überstunden − aufs Konto gebuchte Mehrstunden
+      // 2) Stundenlohn = gearbeitete Stunden (Ist ohne Urlaub/Krank/Feiertag) − ausgezahlte Überstunden − aufs Konto gebuchte Mehrstunden
       if (L.stundenlohn != null) {
-        const erwartet = r2(res.ist - res.mehrVerguetet - Math.max(res.saldoGesammelt, 0));
+        const erwartet = r2(res.ist - abwZettel - res.mehrVerguetet - Math.max(res.saldoGesammelt, 0));
         if (res.vollstaendig) {
           add('Stundenlohn', erwartet, L.stundenlohn, near(erwartet, L.stundenlohn) ? 'ok' : 'abw',
             near(erwartet, L.stundenlohn) ? 'Passt zu deinen Wochenzetteln.' : `Abweichung ${r2(L.stundenlohn - erwartet)} Std.`);
@@ -152,6 +156,18 @@
           add('Stundenlohn', erwartet, L.stundenlohn, 'info', 'Wochenzettel für diesen Monat unvollständig, Vergleich nicht möglich.');
         }
       }
+      // 2b) Urlaubs-, Krank- und Feiertagsstunden einzeln
+      [['urlaub', 'urlaubStd', 'Urlaubsstunden'], ['krank', 'krankStd', 'Krankstunden'], ['feiertag', 'feiertagStd', 'Feiertagsstunden']]
+        .forEach(([kat, feld, titel]) => {
+          const z = res.stdKat[kat];
+          const l = r2(L[feld] || 0);
+          if (!z && !l) return;
+          if (res.vollstaendig) {
+            add(titel, z, l, near(z, l) ? 'ok' : 'abw', near(z, l) ? '' : `Laut Wochenzetteln ${z} Std., abgerechnet ${l} Std.`);
+          } else {
+            add(titel, z, l, 'info', 'Wochenzettel für diesen Monat unvollständig, Vergleich nicht möglich.');
+          }
+        });
       // 3) Fehlstunden werden vom Arbeitszeitkonto abgebaut
       if (res.vollstaendig) {
         const abbauErwartet = r2(Math.max(-res.saldoGesammelt, 0));

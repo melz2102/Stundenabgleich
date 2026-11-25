@@ -24,7 +24,7 @@
 
   // OCR verwechselt gern O/0, l/1, S/5 in Zahlen
   function fixDigits(s) {
-    return s.replace(/(?<=\d)[Oo](?=\d|\b)/g, '0').replace(/(?<=\d)[lI|](?=\d)/g, '1');
+    return s.replace(/_/g, ' ').replace(/(?<=\d)[Oo](?=\d|\b)/g, '0').replace(/(?<=\d)[lI|](?=\d)/g, '1');
   }
 
   function findLineIndex(lines, re, from = 0) {
@@ -41,79 +41,101 @@
     return { line: '', nums: [] };
   }
 
+  // Weitere bezahlte Stunden außer Stundenlohn (Urlaub, Krank, Feiertag, Sonstiges)
+  const ABWESENHEIT = ['urlaubStd', 'krankStd', 'feiertagStd', 'sonstigeStd'];
+  const sumAbw = r => ABWESENHEIT.reduce((s, f) => s + (r[f] || 0), 0);
+  const bezahltErwartet = r => r.zeitlohnStd + (r.ueberstd || 0) + (r.azkAbbau || 0) + sumAbw(r);
+
   function parse(text) {
     const lines = String(text).split(/\r?\n/).map(l => l.replace(/\s+/g, ' ').trim()).filter(Boolean);
     const all = lines.join('\n');
     const r = {
       art: 'lohn', monat: null, jahr: null, abrechnungsdatum: null,
       stundenlohn: null, stundensatz: null, fahrgeldStd: null, azkAbbau: null, azkAufbau: null, ueberstundenLohnart: null,
+      urlaubStd: null, krankStd: null, feiertagStd: null, sonstigeStd: null,
       azkStand: null,
       urlaubAnspruch: null, urlaubGenommen: null, urlaubRest: null,
       zeitlohnStd: null, ueberstd: null, bezahltStd: null,
       lohnarten: [], warnungen: [],
     };
+    const add = (f, v) => { r[f] = Math.round(((r[f] || 0) + v) * 100) / 100; };
 
-    // Abrechnungsmonat
-    const m = all.match(/f[üu]r\s+([A-Za-zäÄ]+)\s+(20\d\d)/i);
+    // Abrechnungsmonat ("für Oktober 2026"; bei schlechten Fotos wird "für" oft verlesen)
+    const monRe = new RegExp(`(${MONATE.join('|')})\\s+(20\\d\\d)`, 'i');
+    const m = all.match(new RegExp(`f\\S{1,2}r\\s+${monRe.source}`, 'i')) || all.match(monRe);
     if (m) {
-      const i = MONATE.indexOf(m[1].toLowerCase().replace('maerz', 'märz'));
+      const i = MONATE.indexOf(m[1].toLowerCase());
       if (i >= 0) { r.monat = i + 1; r.jahr = parseInt(m[2], 10); }
     }
     const d = all.match(/\b(\d{2}\.\d{2}\.20\d\d)\b/);
     if (d) r.abrechnungsdatum = d[1];
 
-    // Lohnarten mit Einheit Std
+    // Lohnarten mit Einheit Std (OCR liest "Std" auch als "Sta", "5td", "Sid" …)
     for (const raw of lines) {
       const l = fixDigits(raw);
-      const la = l.match(/^\W{0,3}(\d{4})\s+(.+?)\s+[S5s]td\.?\s+(\d{1,3}(?:\.\d{3})*,\d{2})(?:\s+(\d{1,3}[,/.]\d{2}))?/i);
+      const la = l.match(/^\W{0,3}(\d{4})\s+(.+?)\s+[S5s][tfi][dao4l]\.?\s+(\d{1,3}(?:\.\d{3})*,\d{2})(?:\s+(\d{1,3}[,/.]\d{2}))?/i);
       if (!la) continue;
       const nr = la[1];
       const bez = la[2].trim();
       const menge = deNum(la[3]);
       r.lohnarten.push({ nr, bezeichnung: bez, menge });
       const b = bez.toLowerCase();
+      if (/zuschl/.test(b)) continue; // Zuschläge sind keine zusätzlichen Stunden
       if (nr === '1000' || /stundenlohn/.test(b)) {
-        r.stundenlohn = (r.stundenlohn || 0) + menge;
+        add('stundenlohn', menge);
         const f = la[4] && deNum(la[4].replace('/', ','));
         if (f) r.stundensatz = f;
-      } else if (/fahrgeld|fahrzeit/.test(b)) r.fahrgeldStd = (r.fahrgeldStd || 0) + menge;
-      else if (/abbau.*(arbeitszeit|azk)/.test(b)) r.azkAbbau = (r.azkAbbau || 0) + menge;
-      else if (/aufbau.*(arbeitszeit|azk)|zuf[üu]hrung/.test(b)) r.azkAufbau = (r.azkAufbau || 0) + menge;
-      else if (/[üu]berstund|mehrarbeit/.test(b) && !/zuschl/.test(b)) r.ueberstundenLohnart = (r.ueberstundenLohnart || 0) + menge;
+      } else if (/fahrgeld|fahrzeit/.test(b)) add('fahrgeldStd', menge);
+      else if (/abbau.*(arbeitszeit|azk)/.test(b)) add('azkAbbau', menge);
+      else if (/aufbau.*(arbeitszeit|azk)|zuf[üu]hrung/.test(b)) add('azkAufbau', menge);
+      else if (/[üu]berstund|mehrarbeit/.test(b)) add('ueberstundenLohnart', menge);
+      else if (/urlaub/.test(b)) add('urlaubStd', menge);
+      else if (/krank/.test(b)) add('krankStd', menge);
+      else if (/feiertag/.test(b)) add('feiertagStd', menge);
+      else add('sonstigeStd', menge);
     }
 
     // Arbeitszeitkonto-Stand ("AZK-Std. 4,25-")
     const azk = all.match(/AZK[-\s]?Std\.?\s*:?\s*(-?\d{1,4}(?:\.\d{3})*,\d{2}\s*-?)/i);
     if (azk) r.azkStand = deNum(azk[1]);
 
-    // Urlaub: Überschrift "... Url. Anspr. | Url.Tg.gen. | Resturlaub", Werte in der Zeile darunter (letzte 3 Zahlen)
+    // Urlaub (Anspruch | genommen | Rest): drei Kopfwerte mit 3-4 Ziffern, bei denen Anspruch − genommen = Rest
+    const passendesTripel = cand => {
+      for (let i = cand.length - 3; i >= 0; i--) {
+        const [a, g, rest] = cand.slice(i, i + 3).map(implied);
+        if (Math.abs(a - g - rest) < 0.01 && a <= 60) return [a, g, rest];
+      }
+      return null;
+    };
+    const kopfZahlen = l => (fixDigits(l).match(/\b\d{3,4}\b/g) || []);
+    let triple = null;
     const ui = findLineIndex(lines, /resturlaub|anspr/i);
     if (ui >= 0) {
       const { nums } = numbersBelow(lines, ui);
-      // Urlaubswerte sind 3-4 Ziffern (z.B. 2700 = 27,00 Tage); Personalnummer/Geburtsdatum fallen so heraus
       const cand = nums.filter(n => n.length >= 3 && n.length <= 4);
-      let triple = null;
-      for (let i = cand.length - 3; i >= 0; i--) {
-        const [a, g, rest] = cand.slice(i, i + 3).map(implied);
-        if (Math.abs(a - g - rest) < 0.01) { triple = [a, g, rest]; break; }
-      }
-      if (!triple && cand.length >= 3) triple = cand.slice(-3).map(implied);
-      if (triple) {
-        [r.urlaubAnspruch, r.urlaubGenommen, r.urlaubRest] = triple;
-      } else if (cand.length === 2) {
-        [r.urlaubAnspruch, r.urlaubRest] = cand.map(implied);
-      }
+      triple = passendesTripel(cand) || (cand.length >= 3 ? cand.slice(-3).map(implied) : null);
+      if (!triple && cand.length === 2) [r.urlaubAnspruch, r.urlaubRest] = cand.map(implied);
     }
+    if (!triple) {
+      // Überschrift nicht erkannt: in den ersten Zeilen nach einem stimmigen Tripel suchen
+      for (const l of lines.slice(0, 15)) { triple = passendesTripel(kopfZahlen(l)); if (triple) break; }
+    }
+    if (triple) [r.urlaubAnspruch, r.urlaubGenommen, r.urlaubRest] = triple;
 
-    // Zeitlohn Std. | Überstd. | Bez. Std. – Werte darunter, Steuer-ID (11 Ziffern) wird übersprungen
-    const zi = findLineIndex(lines, /zeitlohn|bez\.?\s*std/i);
-    if (zi >= 0) {
-      const { nums } = numbersBelow(lines, zi);
-      const cand = nums.filter(n => n.length >= 3 && n.length <= 6);
+    // Zeitlohn Std. | Überstd. | Bez. Std. – Werte darunter bzw. in der Zeile mit der Steuer-ID (11 Ziffern)
+    const setzeZeitlohn = cand => {
       if (cand.length >= 3) [r.zeitlohnStd, r.ueberstd, r.bezahltStd] = cand.slice(-3).map(implied);
       else if (cand.length === 2) [r.zeitlohnStd, r.bezahltStd] = cand.map(implied);
       else if (cand.length === 1) r.bezahltStd = implied(cand[0]);
+    };
+    const zi = findLineIndex(lines, /zeitlohn|bez\.?\s*std|[üu]berstd/i);
+    let zCand = [];
+    if (zi >= 0) zCand = numbersBelow(lines, zi).nums.filter(n => n.length >= 3 && n.length <= 6);
+    if (!zCand.length) {
+      const sid = lines.slice(0, 15).find(l => /\b\d{11}\b/.test(fixDigits(l)));
+      if (sid) zCand = (fixDigits(sid).replace(/\b\d{11}\b/, '').match(/\b\d{3,6}\b/g) || []);
     }
+    setzeZeitlohn(zCand);
 
     pruefe(r);
     return r;
@@ -133,15 +155,15 @@
         !near(r.zeitlohnStd, r.stundenlohn + (r.fahrgeldStd || 0))) {
       r.warnungen.push('Zeitlohn-Stunden passen nicht zu Stundenlohn + Fahrgeld. Bitte prüfen.');
     }
-    if (r.bezahltStd != null && r.zeitlohnStd != null &&
-        !near(r.bezahltStd, r.zeitlohnStd + (r.ueberstd || 0) + (r.azkAbbau || 0))) {
-      r.warnungen.push('Bezahlte Stunden passen nicht zu Zeitlohn + Überstunden + AZK-Abbau. Bitte prüfen.');
+    if (r.bezahltStd != null && r.zeitlohnStd != null && !near(r.bezahltStd, bezahltErwartet(r))) {
+      r.warnungen.push('Bezahlte Stunden passen nicht zu Zeitlohn + Urlaub/Krank/Feiertag + Überstunden + AZK-Abbau. Bitte prüfen.');
     }
     return r;
   }
 
   const FELDER = ['monat', 'jahr', 'abrechnungsdatum', 'stundenlohn', 'stundensatz', 'fahrgeldStd', 'azkAbbau', 'azkAufbau',
-    'ueberstundenLohnart', 'azkStand', 'urlaubAnspruch', 'urlaubGenommen', 'urlaubRest', 'zeitlohnStd', 'ueberstd', 'bezahltStd'];
+    'ueberstundenLohnart', 'urlaubStd', 'krankStd', 'feiertagStd', 'sonstigeStd', 'azkStand',
+    'urlaubAnspruch', 'urlaubGenommen', 'urlaubRest', 'zeitlohnStd', 'ueberstd', 'bezahltStd'];
 
   // Mehrere Erkennungsdurchläufe zusammenführen: pro Feld gewinnt der häufigste Wert, bei Gleichstand der frühere Durchlauf.
   function zusammenfuehren(results) {
@@ -164,7 +186,7 @@
     const GRUPPEN = [
       [['urlaubAnspruch', 'urlaubGenommen', 'urlaubRest'], r => near(r.urlaubAnspruch - r.urlaubGenommen, r.urlaubRest)],
       [['stundenlohn', 'zeitlohnStd'], r => near(r.zeitlohnStd, r.stundenlohn + (r.fahrgeldStd || 0))],
-      [['zeitlohnStd', 'bezahltStd'], r => near(r.bezahltStd, r.zeitlohnStd + (r.ueberstd || 0) + (r.azkAbbau || 0))],
+      [['zeitlohnStd', 'bezahltStd'], r => near(r.bezahltStd, bezahltErwartet(r))],
     ];
     for (const [felder, ok] of GRUPPEN) {
       const probe = Object.assign({}, out);
@@ -175,7 +197,7 @@
     return pruefe(out);
   }
 
-  const api = { parseLohnzettel: parse, pruefe, zusammenfuehren, deNum };
+  const api = { parseLohnzettel: parse, pruefe, zusammenfuehren, deNum, ABWESENHEIT };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.LohnParser = api;
 })(typeof self !== 'undefined' ? self : this);

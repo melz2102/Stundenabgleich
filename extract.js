@@ -89,11 +89,14 @@
   }
 
   function prepareImage(bmp, max, filter) {
-    const scale = Math.min(1, max / Math.max(bmp.width, bmp.height));
+    // Große Fotos verkleinern, kleine (z.B. per WhatsApp verschickte) bis 2,5-fach vergrößern – Tesseract liest größere Schrift besser
+    const scale = Math.min(2.5, max / Math.max(bmp.width, bmp.height));
     const c = document.createElement('canvas');
     c.width = Math.round(bmp.width * scale);
     c.height = Math.round(bmp.height * scale);
     const ctx = c.getContext('2d');
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
     if (filter && filter !== 'none') ctx.filter = filter;
     ctx.drawImage(bmp, 0, 0, c.width, c.height);
     return c;
