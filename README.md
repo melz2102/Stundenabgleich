@@ -48,3 +48,7 @@ Abgeleitet aus der Abrechnung Oktober 2026, bitte bei Bedarf anpassen (`auswertu
 - Verpflegungsmehraufwand (Lohnarten 2045/2046, 14 € bzw. 28 € pro Tag) = Summe "Auslöse/Verpfl." laut Wochenzetteln.
 
 Von Kevin bestätigt am 25.11.2026.
+
+## Updates auf dem Handy
+
+Der Service Worker (`sw.js`) holt jede Datei zuerst mit `cache: 'no-cache'` vom Server und fällt nur ohne Internet auf seinen Speicher zurück. Beim Zurückkehren in die App sucht sie nach einer neuen Version und lädt neu, sobald kein Prüfen-Fenster offen ist. Die Versionsnummer steht in der Übersicht unten (`APP_VERSION` in `app.js`, passend zu `CACHE` in `sw.js`).
