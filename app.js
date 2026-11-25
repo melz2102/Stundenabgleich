@@ -66,6 +66,19 @@ function fmtSize(b) {
   return (b / 1024 / 1024).toFixed(1).replace('.', ',') + ' MB';
 }
 
+const STATUS_LABEL = {
+  neu: 'Noch nicht ausgelesen',
+  ausgelesen: 'Ausgelesen, bitte prüfen',
+  geprueft: '✓ Geprüft',
+  fehler: 'Auslesen nicht möglich',
+};
+
+function fmtH(v, signed) {
+  if (v == null || isNaN(v)) return '–';
+  const t = Math.abs(v).toFixed(2).replace('.', ',');
+  return (v < 0 ? '−' : (signed && v > 0 ? '+' : '')) + t;
+}
+
 function fmtDate(ts) {
   return new Date(ts).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' });
 }
@@ -152,11 +165,26 @@ async function handleFiles(fileList) {
       period: guess.period || null,
       thumb: await makeThumb(file),
       blob: file,
-      status: 'neu', // später: 'ausgelesen', 'geprüft'
+      status: 'neu', // 'ausgelesen', 'geprueft', 'fehler'
     };
+    let readMsg = '';
+    if (doc.type === 'woche' && isPdf) {
+      try {
+        const data = await self.Extract.readWochenzettel(file);
+        doc.data = data;
+        if (data.kw && data.jahr) doc.period = `KW ${data.kw}/${data.jahr}`;
+        doc.status = 'ausgelesen';
+        readMsg = `<br>Ausgelesen: ${data.tage.filter(t => t.eintraege.length).length} Tage, ${fmtH(data.summen.prod + data.summen.unprod)} Std., Saldo ${fmtH(data.saldo, true)}.`;
+      } catch (e) {
+        doc.status = 'fehler';
+        doc.readError = e.message || String(e);
+        readMsg = `<br>Auslesen nicht möglich: ${esc(doc.readError)}`;
+      }
+    }
     try {
       await Docs.add(doc);
-      out.insertAdjacentHTML('beforeend', `<div class="notice ok">✓ Als <strong>${TYPE_LABEL[doc.type]}</strong> gespeichert: ${esc(doc.name)}${doc.period ? ' (' + esc(doc.period) + ')' : ''}</div>`);
+      out.insertAdjacentHTML('beforeend', `<div class="notice ok">✓ Als <strong>${TYPE_LABEL[doc.type]}</strong> gespeichert: ${esc(doc.period || doc.name)}${readMsg}
+        ${doc.data ? `<div style="margin-top:8px"><button class="btn small primary" data-review="${doc.id}">Jetzt prüfen</button></div>` : ''}</div>`);
     } catch (e) {
       out.insertAdjacentHTML('beforeend', `<div class="notice err">„${esc(file.name)}“ konnte nicht gespeichert werden: ${esc(e.message || e)}</div>`);
     }
@@ -192,9 +220,10 @@ async function renderDocs() {
       <div class="doc-info">
         <div class="doc-name">${esc(d.period || d.name)}</div>
         <div class="doc-meta"><span class="badge">${TYPE_LABEL[d.type]}</span>${fmtDate(d.addedAt)} · ${fmtSize(d.size)}</div>
-        <div class="doc-meta">${d.status === 'neu' ? 'Noch nicht ausgelesen' : esc(d.status)}</div>
+        <div class="doc-meta status-${d.status}">${STATUS_LABEL[d.status] || esc(d.status)}</div>
       </div>
       <div class="doc-actions">
+        ${d.data ? `<button class="btn small primary" data-review="${d.id}">Prüfen</button>` : ''}
         <button class="btn small" data-act="open">Ansehen</button>
         <button class="btn small danger" data-act="del">Löschen</button>
       </div>
@@ -236,6 +265,98 @@ async function openViewer(id) {
 }
 
 $('#viewer-close').addEventListener('click', () => $('#viewer').close());
+
+/* ---------- Prüfen und Korrigieren ---------- */
+const KAT_LABEL = {
+  baustelle: 'Baustelle', arbeit: 'Arbeit (ohne Baustelle)', lehrgang: 'Lehrgang', krank: 'Krank', urlaub: 'Urlaub',
+  feiertag: 'Feiertag', gleitzeit: 'Gleitzeit (GZ)', unproduktiv: 'Unproduktiv', sonstiges: 'Sonstiges',
+};
+const UNPROD_KAT = ['krank', 'urlaub', 'feiertag', 'unproduktiv'];
+let reviewId = null;
+
+function numIn(v) {
+  const n = parseFloat(String(v).replace('−', '-').replace(',', '.'));
+  return isNaN(n) ? 0 : n;
+}
+
+function inVal(v) {
+  return v ? String(v).replace('.', ',') : '';
+}
+
+async function openReview(id) {
+  const d = await Docs.get(id);
+  if (!d || !d.data) return;
+  reviewId = id;
+  const w = d.data;
+  const dayHtml = w.tage.map((t, ti) => {
+    const datum = t.datum ? new Date(t.datum + 'T12:00').toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' }) : '';
+    const rows = t.eintraege.length ? t.eintraege.map((e, ei) => `
+      <div class="entry" data-t="${ti}" data-e="${ei}">
+        <select data-f="kategorie">${Object.entries(KAT_LABEL).map(([k, l]) => `<option value="${k}"${k === e.kategorie ? ' selected' : ''}>${l}</option>`).join('')}</select>
+        <div class="entry-grid">
+          <label>Stunden<input inputmode="decimal" data-f="std" value="${inVal(e.prod + e.unprod)}"></label>
+          <label>Mehr<input inputmode="decimal" data-f="mehr" value="${inVal(e.mehr)}"></label>
+          <label>Minder<input inputmode="decimal" data-f="mind" value="${inVal(e.mind)}"></label>
+        </div>
+        <input data-f="beschreibung" value="${esc([e.kostentraeger, e.beschreibung].filter(Boolean).join(' · '))}" placeholder="Baustelle / Beschreibung">
+      </div>`).join('') : '<div class="muted small">kein Eintrag</div>';
+    return `<div class="day"><div class="day-head"><strong>${esc(t.tag)}</strong> <span class="muted">${datum}</span></div>${rows}</div>`;
+  }).join('');
+
+  $('#viewer-title').textContent = 'Prüfen: ' + (d.period || d.name);
+  $('#viewer-body').innerHTML = `
+    <div class="review">
+      ${w.warnungen && w.warnungen.length ? `<div class="notice err">${w.warnungen.map(esc).join('<br>')}</div>` : ''}
+      <div class="card small">
+        Zeitraum ${esc(w.vom || '')} bis ${esc(w.bis || '')}<br>
+        Summe laut Zettel: ${fmtH(w.summen.prod)} produktive + ${fmtH(w.summen.unprod)} unproduktive Std.<br>
+        Saldo <strong>${fmtH(w.saldo, true)}</strong> · Mehrstunden: ${w.mehrstundenGesammelt ? 'sammeln (Arbeitszeitkonto)' : w.mehrstundenVerguetet ? 'vergüten' : 'nichts angekreuzt'}
+      </div>
+      <p class="muted small">Vergleiche mit dem Zettel und korrigiere, falls etwas falsch erkannt wurde.</p>
+      ${dayHtml}
+      <div class="review-actions">
+        <button class="btn" data-review-open="${d.id}">Zettel ansehen</button>
+        <button class="btn primary" id="review-save">Stimmt so, speichern</button>
+      </div>
+    </div>`;
+  if (!$('#viewer').open) $('#viewer').showModal();
+}
+
+async function saveReview() {
+  const d = await Docs.get(reviewId);
+  if (!d) return;
+  const w = d.data;
+  $$('#viewer-body .entry').forEach(el => {
+    const e = w.tage[+el.dataset.t].eintraege[+el.dataset.e];
+    const get = f => el.querySelector(`[data-f="${f}"]`).value;
+    e.kategorie = get('kategorie');
+    const std = numIn(get('std'));
+    if (UNPROD_KAT.includes(e.kategorie)) { e.unprod = std; e.prod = 0; } else { e.prod = std; e.unprod = 0; }
+    e.mehr = numIn(get('mehr'));
+    e.mind = numIn(get('mind'));
+    const desc = get('beschreibung').trim();
+    const m = desc.match(/^(\d{4,})\s*·?\s*(.*)$/);
+    if (m) { e.kostentraeger = m[1]; e.beschreibung = m[2]; } else { e.kostentraeger = ''; e.beschreibung = desc; }
+  });
+  w.tage.forEach(t => {
+    t.summe = ['mehr', 'mind', 'prod', 'unprod'].reduce((o, k) => { o[k] = t.eintraege.reduce((s, e) => s + e[k], 0); return o; }, {});
+    t.kategorien = Array.from(new Set(t.eintraege.map(e => e.kategorie)));
+  });
+  d.status = 'geprueft';
+  d.checkedAt = Date.now();
+  await Docs.add(d);
+  $('#viewer').close();
+  renderDocs();
+}
+
+document.addEventListener('click', e => {
+  const r = e.target.closest('[data-review]');
+  if (r) { openReview(r.dataset.review); return; }
+  const o = e.target.closest('[data-review-open]');
+  if (o) { $('#viewer').close(); openViewer(o.dataset.reviewOpen); return; }
+  if (e.target.id === 'review-save') saveReview();
+});
+
 
 /* ---------- Übersicht ---------- */
 async function renderHome() {
