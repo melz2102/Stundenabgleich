@@ -142,6 +142,11 @@ $('#type-seg').addEventListener('click', e => {
   });
 });
 
+// Foto eines Wochenzettels (meist handgeschrieben): wird von Hand eingetragen
+function isHandWoche(d) {
+  return d.type === 'woche' && /^image\//.test(d.mime || '');
+}
+
 function isExcelFile(f) {
   return /\.(xlsx?|xlsm)$/i.test(f.name || '') || /spreadsheet|ms-excel/.test(f.type || '');
 }
@@ -220,7 +225,7 @@ async function handleFiles(fileList) {
         readMsg = `<br>Auslesen nicht möglich: ${esc(doc.readError)}`;
       }
     } else if (doc.type === 'woche') {
-      readMsg = '<br>Fotos von Wochenzetteln werden noch nicht ausgelesen. Am besten das PDF verwenden.';
+      readMsg = '<br>Handgeschriebene Zettel trägst du selbst ein. Das Foto siehst du dabei, die Tage sind schon mit dem Soll vorausgefüllt.';
     } else if (doc.type === 'lohn') {
       const prog = document.createElement('div');
       prog.className = 'notice';
@@ -245,7 +250,8 @@ async function handleFiles(fileList) {
     try {
       await Docs.add(doc);
       out.insertAdjacentHTML('beforeend', `<div class="notice ok">✓ Als <strong>${TYPE_LABEL[doc.type]}</strong> gespeichert: ${esc(doc.period || doc.name)}${readMsg}
-        ${doc.data ? `<div style="margin-top:8px"><button class="btn small primary" data-review="${doc.id}">Jetzt prüfen</button></div>` : ''}</div>`);
+        ${doc.data ? `<div style="margin-top:8px"><button class="btn small primary" data-review="${doc.id}">Jetzt prüfen</button></div>`
+          : isHandWoche(doc) ? `<div style="margin-top:8px"><button class="btn small primary" data-review="${doc.id}">Jetzt eintragen</button></div>` : ''}</div>`);
     } catch (e) {
       out.insertAdjacentHTML('beforeend', `<div class="notice err">„${esc(file.name)}“ konnte nicht gespeichert werden: ${esc(e.message || e)}</div>`);
     }
@@ -281,10 +287,11 @@ async function renderDocs() {
       <div class="doc-info">
         <div class="doc-name">${esc(d.period || d.name)}</div>
         <div class="doc-meta"><span class="badge">${TYPE_LABEL[d.type]}</span>${fmtDate(d.addedAt)} · ${fmtSize(d.size)}</div>
-        <div class="doc-meta status-${d.status}">${STATUS_LABEL[d.status] || esc(d.status)}</div>
+        <div class="doc-meta status-${d.status}">${isHandWoche(d) && d.status === 'neu' ? 'Noch nicht eingetragen' : (STATUS_LABEL[d.status] || esc(d.status))}</div>
       </div>
       <div class="doc-actions">
-        ${d.data || d.type === 'lohn' ? `<button class="btn small primary" data-review="${d.id}">Prüfen</button>` : ''}
+        ${isHandWoche(d) ? `<button class="btn small primary" data-review="${d.id}">${d.data ? 'Bearbeiten' : 'Eintragen'}</button>`
+          : d.data || d.type === 'lohn' ? `<button class="btn small primary" data-review="${d.id}">Prüfen</button>` : ''}
         <button class="btn small" data-act="open">Ansehen</button>
         <button class="btn small danger" data-act="del">Löschen</button>
       </div>
@@ -424,6 +431,7 @@ async function saveReviewLohn(d) {
 async function openReview(id) {
   const d = await Docs.get(id);
   if (!d) return;
+  if (isHandWoche(d)) return self.openManualWeek(id);
   if (d.type === 'lohn') {
     if (!d.data) d.data = self.LohnParser.parseLohnzettel('');
     reviewId = id;

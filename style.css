@@ -169,3 +169,14 @@ html, body { overflow-x: hidden; }
 .sheet-view { overflow: auto; padding: 8px; background: #fff; color: #111; }
 .sheet-view table { border-collapse: collapse; font-size: 12px; }
 .sheet-view td { border: 1px solid #ccc; padding: 2px 4px; white-space: pre-wrap; vertical-align: top; }
+
+.hand-photo { position: sticky; top: 0; z-index: 2; height: 34vh; overflow: auto; background: #222; border-bottom: 1px solid var(--line); }
+.hand-photo img { width: calc(100% * var(--zoom, 1)); max-width: none; display: block; }
+.zoom-btns { position: sticky; left: 100%; bottom: 8px; display: inline-flex; gap: 6px; float: right; margin: -44px 8px 0 0; }
+.zoom-btns .btn { min-width: 38px; font-size: 18px; font-weight: 700; }
+.hand-row { display: grid; grid-template-columns: 1fr 80px 40px; gap: 6px; }
+.check { display: flex; gap: 8px; align-items: center; font-size: 15px; margin: 8px 0 2px; }
+.check input { width: 20px; height: 20px; }
+.neg-text { color: var(--danger); }
+.pos-text { color: var(--ok); }
+.entry.hand { border-top: 1px dashed var(--line); }
