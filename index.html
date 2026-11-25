@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#1f4e79">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Stunden">
+  <title>Stundenabgleich</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1 id="title">Übersicht</h1>
+  </header>
+
+  <main>
+    <!-- Übersicht -->
+    <section id="view-home" class="view active">
+      <div class="card stats">
+        <div class="stat"><span class="num" id="count-woche">0</span><span class="lbl">Wochenzettel</span></div>
+        <div class="stat"><span class="num" id="count-lohn">0</span><span class="lbl">Lohnzettel</span></div>
+      </div>
+      <div class="card">
+        <h2>Monatsauswertung</h2>
+        <p class="muted">Hier erscheinen später Gesamtstunden, Überstunden, Baustellen-, Kranken- und Urlaubstage pro Monat sowie der Abgleich mit dem Lohnzettel.</p>
+        <p class="muted">Lade zuerst deine Zettel hoch.</p>
+        <button class="btn primary" data-goto="add">Zettel hinzufügen</button>
+      </div>
+      <div class="card" id="storage-card">
+        <h2>Speicher</h2>
+        <p class="muted" id="storage-info">Deine Zettel werden nur auf diesem Handy gespeichert.</p>
+      </div>
+    </section>
+
+    <!-- Hinzufügen -->
+    <section id="view-add" class="view">
+      <div class="card">
+        <h2>Was möchtest du hinzufügen?</h2>
+        <div class="seg" role="radiogroup" id="type-seg">
+          <button class="seg-btn active" data-type="woche" role="radio" aria-checked="true">Wochenzettel</button>
+          <button class="seg-btn" data-type="lohn" role="radio" aria-checked="false">Lohnzettel</button>
+        </div>
+        <div class="actions">
+          <label class="btn primary big">
+            <input type="file" accept="image/*" capture="environment" id="in-camera" hidden>
+            📷 Foto aufnehmen
+          </label>
+          <label class="btn big">
+            <input type="file" accept="image/*,application/pdf" multiple id="in-file" hidden>
+            📄 Foto oder PDF auswählen
+          </label>
+        </div>
+        <p class="muted small">Tipp: Wochenzettel als PDF lassen sich am genauesten auslesen. Beim Foto den Zettel flach hinlegen und gut ausleuchten.</p>
+      </div>
+      <div id="add-result"></div>
+    </section>
+
+    <!-- Dokumente -->
+    <section id="view-docs" class="view">
+      <div class="seg" id="filter-seg">
+        <button class="seg-btn active" data-filter="alle">Alle</button>
+        <button class="seg-btn" data-filter="woche">Wochenzettel</button>
+        <button class="seg-btn" data-filter="lohn">Lohnzettel</button>
+      </div>
+      <ul id="doc-list" class="doc-list"></ul>
+      <p id="doc-empty" class="muted center">Noch keine Zettel gespeichert.</p>
+    </section>
+  </main>
+
+  <nav class="tabbar">
+    <button class="tab active" data-goto="home"><span>🏠</span>Übersicht</button>
+    <button class="tab" data-goto="add"><span>➕</span>Hinzufügen</button>
+    <button class="tab" data-goto="docs"><span>🗂️</span>Zettel</button>
+  </nav>
+
+  <dialog id="viewer">
+    <div class="viewer-head">
+      <strong id="viewer-title"></strong>
+      <button class="btn small" id="viewer-close">Schließen</button>
+    </div>
+    <div id="viewer-body"></div>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>
